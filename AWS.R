@@ -26,14 +26,14 @@ Bucket_Deployment_2 <- "s3://whale-recordings/CPhydrophone/Avila/Deployment 2/wa
 
 bucket_exists(
   bucket = Bucket,
-  key = YOUR_AWS_ACCESS_KEY,
-  secret = YOUR_AWS_SECRET_ACCESS_KEY,
+  key = AWS_ACCESS_KEY_ID,
+  secret = AWS_SECRET_ACCESS_KEY,
   region = AWS_DEFAULT_REGION
 )
 
 get_bucket_df(
-  bucket = Bucket_Deployment_2,
-  key = YOUR_AWS_ACCESS_KEY,
-  secret = YOUR_AWS_SECRET_ACCESS_KEY,
+  bucket = Bucket,
+  key = AWS_ACCESS_KEY_ID,
+  secret = AWS_SECRET_ACCESS_KEY,
   region = AWS_DEFAULT_REGION
 )
