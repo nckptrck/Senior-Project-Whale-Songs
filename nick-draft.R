@@ -212,3 +212,4 @@ df |>
   ggplot(aes(x = time_start, y = binary, color = song)) +
   geom_line() +
   scale_color_manual(values = c('red2', 'blue3'))
+
