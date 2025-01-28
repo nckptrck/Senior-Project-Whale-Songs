@@ -1,7 +1,4 @@
-library(tuneR)  # For reading WAV files
-library(signal) # For signal processing
-library(dplyr)
-library(tibble)
+# used to fast fourier transform the wav files and make them tabular
 wav_to_frequency_csv <- function(wav_path,
                                  time_period, # This is in seconds 
                                  freq_ranges,
@@ -22,7 +19,7 @@ wav_to_frequency_csv <- function(wav_path,
   # Calculate samples per period
   samples_per_period <- round(time_period * sample_rate)
   num_periods <- floor(length(audio_data) / samples_per_period)
-
+  
   results <- list()
   results$time_start <- numeric()
   results$time_end <- numeric()
@@ -82,14 +79,11 @@ wav_to_frequency_csv <- function(wav_path,
   return(df)
 }
 
-# Change this to the location you have it in
-wav <- "C:/Users/alexj/Downloads/6805.230201090825.wav"
-
-# create the freq ranges    
+# create the freq ranges
 generate_freq_ranges <- function(end_freq, # where do you want the freq to stop
                                  step_size) {
   num_ranges <- ceiling(end_freq / step_size)
-  freq_ranges <- list() 
+  freq_ranges <- list()
   for (i in 1:num_ranges) {
     start <- (i - 1) * step_size
     end <- min(start + step_size - 1, end_freq)
@@ -97,6 +91,50 @@ generate_freq_ranges <- function(end_freq, # where do you want the freq to stop
   }
   return(freq_ranges)
 }
-freq_ranges <- generate_freq_ranges(300, 25) 
 
-df3 <- wav_to_frequency_csv(wav, .1, freq_ranges, start_time = 6.4, end_time = 7.7)
+# can read in data from AWS and then merge annotations with tabular data
+merging_data <- function(name, end_freq, step_size, 
+                         time_period = .1, # you can change this
+                         start_time = NULL, end_time = NULL, # to shrink around one part if necessary
+                         annotated = FALSE # This is for when the data is not annotated we can still read in the files into csv form
+                         ){
+  freq_ranges <- generate_freq_ranges(end_freq = end_freq, step_size = step_size)
+  
+  # grabbing the wav file
+  grab_wav_files(name)
+  
+  # creating the data frame
+  wav_file <- wav_to_frequency_csv(name, time_period, freq_ranges,start_time, end_time)
+  
+  # if there are annotations reading in the annotations txt
+  if (annotated){
+    txt_name <- sub("\\.wav$", "-SS", name)
+    target <- grab_txt_files(txt_name)
+    
+    # adding the indicator column
+    wav_file$song <- 0
+    for(i in 1:nrow(target)){
+      begin <- target$begin_time[i]
+      end <- target$end_time[i]
+      
+      wav_file$song <- ifelse(wav_file$time_start >= begin & wav_file$time_start <= end | wav_file$time_end >= begin & wav_file$time_end <= end,
+                              1,
+                              wav_file$song)
+    }
+    wav_file$song <- factor(wav_file$song, levels = c(1,0))
+  }
+  
+  # deleting the file to save space
+  if (file.exists(name)) {
+    file.remove(name)
+  }
+  return (wav_file)
+}
+
+# for not annotated data can also use wav_to_frequency_csv but this would require you to have downloaded the data prior
+
+
+# how to use merging_data
+# file <- "6805.230201090825.wav"   # need to change this to the files that you want to pull
+
+# df <- merging_data(file, 800, 50)
