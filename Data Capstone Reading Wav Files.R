@@ -111,15 +111,21 @@ merging_data <- function(name, end_freq, step_size,
     txt_name <- sub("\\.wav$", "-SS", name)
     target <- grab_txt_files(txt_name)
     
-    # adding the indicator column
+    # adding the indicator column & annotation (selection) number
     wav_file$song <- 0
+    wav_file$annotation_num <- 0
     for(i in 1:nrow(target)){
       begin <- target$begin_time[i]
       end <- target$end_time[i]
       
+      # target column
       wav_file$song <- ifelse(wav_file$time_start >= begin & wav_file$time_start <= end | wav_file$time_end >= begin & wav_file$time_end <= end,
                               1,
                               wav_file$song)
+      # annotation (selection) number
+      wav_file$annotation_num <- ifelse(wav_file$time_start >= begin & wav_file$time_start <= end | wav_file$time_end >= begin & wav_file$time_end <= end,
+                                   i,
+                                   wav_file$annotation_num)
     }
     wav_file$song <- factor(wav_file$song, levels = c(1,0))
   }
