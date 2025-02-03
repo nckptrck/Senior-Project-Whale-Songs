@@ -130,6 +130,7 @@ merging_data <- function(name, end_freq, step_size,
     wav_file$song <- factor(wav_file$song, levels = c(1,0))
   }
   
+  wav_file$time_interval <- rleid(wav_file$annotation_num)
   # deleting the file to save space
   if (file.exists(name)) {
     file.remove(name)
