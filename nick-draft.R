@@ -134,7 +134,7 @@ train_cvs <- vfold_cv(train_data, v = 5)
 # Model 1: Random Forest -------------------------------------------------------
 
 full_recipe <- recipe(song~., data = train_data) |> 
-  step_rm(time_start, time_end)
+  step_rm(time_start, time_end, annotation_num)
 
 # tune model
 rf_tune <- rand_forest(mtry = tune(), 
