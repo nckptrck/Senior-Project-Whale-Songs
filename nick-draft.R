@@ -230,17 +230,20 @@ test_data |>
   facet_wrap(~type)
 
 # Model 2: KNN -----------------------------------------------------------------
+recipe_norm <- recipe(song~., data = train_data) |> 
+  step_rm(time_start, time_end, annotation_num, time_interval) |> 
+  step_normalize(all_numeric_predictors())
 
 # tuning
 knn_tune <- nearest_neighbor(neighbors = tune()) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
-neighbor_grid <- grid_regular(neighbors(c(70,100)),
-                              levels = 20)
+neighbor_grid <- grid_regular(neighbors(c(1,150)),
+                              levels = 10)
 
 knn_tune_wf <- workflow() |> 
-  add_recipe(full_recipe) |> 
+  add_recipe(recipe_norm) |> 
   add_model(knn_tune)
 
 knn_grid_search <- tune_grid(knn_tune_wf,
@@ -248,17 +251,17 @@ knn_grid_search <- tune_grid(knn_tune_wf,
                              grid = neighbor_grid,
                              metrics = metric_set(roc_auc, precision, recall))
 
+knn_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 5)
 knn_grid_search |> collect_metrics() |> filter(.metric == 'precision') |> slice_max(mean, n = 5)
-  
-
+knn_grid_search |> collect_metrics() |> filter(.metric == 'recall') |> slice_max(mean, n = 5)
 
 # fitting best model (Precision)
-knn <- nearest_neighbor(neighbors = 70) %>%
+knn <- nearest_neighbor(neighbors = 67) %>%
   set_engine("kknn") %>%
   set_mode("classification")
 
 knn_wf <- workflow() |> 
-  add_recipe(full_recipe) |> 
+  add_recipe(recipe_norm) |> 
   add_model(knn)
 
 knn_fit <- knn_wf |> fit(train_data)
@@ -291,6 +294,88 @@ knn_errors <- test_data |>
   filter(song != knn.pred)
 
 # Model 3: Logistic Regression -------------------------------------------------
+logit_grid <- grid_regular(penalty(),
+                           mixture(),
+                           levels = 10)
+
+logit_tune <- logistic_reg(penalty = tune(),
+                          mixture = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+logit_tune_wf <- workflow() |> 
+  add_model(logit_tune) |> 
+  add_recipe(recipe_norm)
+
+logit_gs <- tune_grid(logit_tune_wf,
+          resamples = train_cvs,
+          grid = logit_grid,
+          metrics = metric_set(roc_auc, precision, recall))
+
+
+logit_gs |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 5)
+logit_gs |> collect_metrics() |> filter(.metric == 'precision',
+                                        mean != 1) |> slice_max(mean, n = 100)
+logit_gs |> collect_metrics() |> filter(.metric == 'recall') |> slice_max(mean, n = 5)
+
+# predict on test set
+logit_mod <- logistic_reg(penalty = 0.0774,mixture = 0) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+logit_wf <- workflow() |> 
+  add_model(logit_mod) |> 
+  add_recipe(recipe_norm)
+
+logit_fit <- logit_wf |> fit(train_data)
+
+test_data$logit.pred <- predict(logit_fit, new_data = test_data)$.pred_class
+
+# Compute accuracy, precision, recall, and F1-score
+accuracy(test_data, truth = song, estimate = logit.pred)
+precision(test_data, truth = song, estimate = logit.pred)
+recall(test_data, truth = song, estimate = logit.pred)
+f_meas(test_data, truth = song, estimate = logit.pred)
+
+# confusion matrix
+conf_mat(test_data, truth = song, estimate = logit.pred)
+
+# Model 4: LDA -----------------------------------------------------------------
+library(discrim)
+
+lda_mod <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+lda_cv <- lda_mod |> 
+  fit_resamples(recipe_norm,
+                train_cvs,
+                metrics = metric_set(precision,recall,roc_auc,f_meas))
+
+lda_cv |> collect_metrics()
+
+# fit model
+lda_wf <- workflow() |> 
+  add_model(lda_mod) |> 
+  add_recipe(recipe_norm)
+
+lda_fit <- lda_wf |> fit(train_data)
+
+# evaluate on test set
+test_data$lda.pred <- predict(lda_fit, new_data = test_data)$.pred_class
+
+# Compute accuracy, precision, recall, and F1-score
+accuracy(test_data, truth = song, estimate = lda.pred)
+precision(test_data, truth = song, estimate = lda.pred)
+recall(test_data, truth = song, estimate = lda.pred)
+f_meas(test_data, truth = song, estimate = lda.pred)
+
+# confusion matrix
+conf_mat(test_data, truth = song, estimate = lda.pred)
+
+
+# Model 5: SVM
+
 
 
 # proportion of each whale song being predicted as 1
@@ -298,7 +383,7 @@ test_data |>
   mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
          rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1),
          rf.pred.precision = ifelse(as.numeric(rf.pred.precision) == 2,0,1),
-         rf.pred.recall = ifelse(as.numeric(rf.pred.recall) == 2,0,1))  |> 
+         logit.pred = ifelse(as.numeric(logit.pred) == 2,0,1))  |> 
   group_by(annotation_num) |> 
   summarise(n.obs = n(),
             n.knn = sum(knn.pred),
@@ -307,7 +392,104 @@ test_data |>
             prop.rf.roc = sum(rf.pred)/n(),
             n.rf.precision = sum(rf.pred.precision),
             prop.rf.precision = sum(rf.pred.precision)/n(),
-            n.rf.recall = sum(rf.pred.precision),
-            prop.rf.recall = sum(rf.pred.precision)/n()
+            n.logit = sum(logit.pred),
+            prop.logit = sum(logit.pred)/n()
             )
+
+# table with time intervals
+test_data |> 
+  mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
+         rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1),
+         rf.pred.precision = ifelse(as.numeric(rf.pred.precision) == 2,0,1),
+         logit.pred = ifelse(as.numeric(logit.pred) == 2,0,1))  |> 
+  group_by(time_interval) |> 
+  summarise(n.obs = n(),
+            n.knn = sum(knn.pred),
+            prop.knn = sum(knn.pred)/n(),
+            n.rf.roc = sum(rf.pred),
+            prop.rf.roc = sum(rf.pred)/n(),
+            n.rf.precision = sum(rf.pred.precision),
+            prop.rf.precision = sum(rf.pred.precision)/n(),
+            n.logit = sum(logit.pred),
+            prop.logit = sum(logit.pred)/n()
+  )
+# Principal Component Analysis -------------------------------------------------
+
+# create matrix
+df_pca <- df2 |> 
+  dplyr::select(ends_with('Hz'))
+
+df_mat <- as.matrix(df_pca) |> 
+  scale()
+
+# fit pca
+pca <- prcomp(df_mat)
+
+# explore components
+
+pca$rotation |> 
+  data.frame() |> 
+  dplyr::select(PC1) |> 
+  slice_max(abs(PC1), n = 18)
+
+# By Whale Song
+pca$x |> 
+  as.data.frame() |> 
+  mutate(song = df2$song) |> 
+  ggplot(aes(x = PC1, y = PC2, color = song)) +
+  geom_point() +
+  facet_grid(rows = vars(song)) +
+  labs(x = "Principal Component 1",
+       y = "Principal Component 2",
+       title = "Scatterplot: First Two Principal Components By Whale Song",
+       subtitle = 'Colored by KNN Model Prediction',
+       color = "Whale Song") +
+  theme_classic() +
+  scale_color_manual(values = c('red', 'blue'))
+
+# By predictions
+pca$x[13001:18000,] |> 
+  as.data.frame() |> 
+  mutate(song = test_data$song,
+         pred = test_data$knn.pred) |> 
+  ggplot(aes(x = PC1, y = PC2, color = pred)) +
+  geom_point() +
+  facet_grid(rows = vars(song)) +
+  labs(x = "Principal Component 1",
+       y = "Principal Component 2",
+       title = "Scatterplot: First Two Principal Components By Whale Song",
+       subtitle = 'Colored by KNN Model Prediction',
+       color = "KNN Prediction") +
+  theme_classic() +
+  scale_color_manual(values = c('red', 'blue'))
+
+
+cumsum(pca$sdev^2)/sum(pca$sdev^2)
+
+# knn with pca
+
+pca_recipe <- recipe(song~., data = train_data) |> 
+  step_rm(time_start, time_end, annotation_num, time_interval) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  step_pca(num_comp = 15)
+# tuning
+knn_tune <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+neighbor_grid <- grid_regular(neighbors(c(1,150)),
+                              levels = 10)
+
+knn_tune_wf <- workflow() |> 
+  add_recipe(pca_recipe) |> 
+  add_model(knn_tune)
+
+knn_grid_search <- tune_grid(knn_tune_wf,
+                             resamples = train_cvs,
+                             grid = neighbor_grid,
+                             metrics = metric_set(roc_auc, precision, recall))
+
+knn_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 5)
+knn_grid_search |> collect_metrics() |> filter(.metric == 'precision') |> slice_max(mean, n = 5)
+knn_grid_search |> collect_metrics() |> filter(.metric == 'recall') |> slice_max(mean, n = 5)
             
