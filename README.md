@@ -1,2 +1,2 @@
-# Senior-Project-Whale-Songs
+# Marine Acoustic Pattern Detection
 # 🐋
