@@ -1,13 +1,20 @@
+# ---------------------------- Description  ------------------------------------
 
-#This is an explanation on how we were able to call the aws files into r without having to go to the aws s3 bucket and download manually. 
-#You will need to set up an .Renviron file that contains your access key and secret access key.
-#This can be created in the IAM section of the aws server after clicking on your user. 
+# This is an explanation on how we were able to call the aws files into r without having to go to the aws s3 bucket and download manually. 
+# You will need to set up an .Renviron file that contains your access key and secret access key.
+# This can be created in the IAM section of the aws server after clicking on your user. 
 
 
-# This is a list of the commands you can call 
-###### ls("package:aws.s3")
+# ------------------------------ Example  --------------------------------------
 
-###### bucketlist()
+# This is a list of the commands you can call
+
+# install.packages("aws.s3")
+# library(aws.s3)
+# ls("package:aws.s3")
+
+# bucketlist()
+
 # should see this in the console after creating that .Renviron file and restarting R assuming your credentials are correct
 
 #                                      Bucket             CreationDate
@@ -26,6 +33,11 @@
 
 # this one is for txt files 
 # it does not save the file locally just in the r environment
+
+# ------------------------ Text File Grabbing Function ------------------------- 
+
+# currently only works for Avila 
+# You can choose the deployments
 
 grab_txt_files <- function(name, Bucket = "s3://whale-recordings/", Place = "Avila", number = "2"){
   Object <- paste0("CPhydrophone/", Place, "/Deployment ", number, "/selection-tables/", name, ".txt")
@@ -54,9 +66,10 @@ grab_txt_files <- function(name, Bucket = "s3://whale-recordings/", Place = "Avi
 
 #  file_name_you_want <- grab_txt_files("6805.230201090825-SS")
 
-# This one is for the wav files 
+# ------------------------- WAV File Grabbing Function -------------------------
 
 grab_wav_files <- function(name, Bucket = "s3://whale-recordings/", Place = "Avila", number = "2"){
+  print_statement <- "The name is not correct"
   Object <- paste0("CPhydrophone/",Place, "/Deployment ", number, "/wav-files/fullsize_files/", name)
   
   if (object_exists(object = Object, bucket = Bucket,
@@ -67,17 +80,16 @@ grab_wav_files <- function(name, Bucket = "s3://whale-recordings/", Place = "Avi
                         key = Sys.getenv("AWS_ACCESS_KEY_ID"), secret = Sys.getenv("AWS_SECRET_ACCESS_KEY"),
                         region = Sys.getenv("AWS_DEFAULT_REGION"))
     writeBin(table, name)
-    return("Done")
+    print_statement <- "Done"
   }
-  return ("The name is not correct")
+  return (print_statement)
 }
 
 # how to use 
 #   grab_wav_files("6805.230201090825.wav") just downloads the files
 
 
-#Testing 
-
+# Ignore -----------------------------------------------------------------------
 
 # Bucket <- "s3://whale-recordings/"
 # table <- get_object(
