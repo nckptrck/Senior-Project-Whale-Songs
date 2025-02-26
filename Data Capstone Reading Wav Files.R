@@ -197,33 +197,33 @@ fft_to_csv <- function(name, end_freq, step_size,
 }
 
 # ----------------------- Creation of fft_csv ----------------------------------
-wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
-wavs <- as.list(wavs_names$Filename)
-
-for (i in wavs_names) {
-  name <- paste0(i, ".wav")
-  merging_data_melfcc_csv(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
-  rm(wav_file)
-  gc()
-  
-}
+# wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
+# wavs <- as.list(wavs_names$Filename)
+# 
+# for (i in wavs_names) {
+#   name <- paste0(i, ".wav")
+#   merging_data_melfcc_csv(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
+#   rm(wav_file)
+#   gc()
+#   
+# }
 
 # combining to one master csv 
 # can edit the training one
 
-test <- c(31,27,29)
-validation <- c(17, 22,32,28,23)
-all_indices <- 1:38
-remaining <- setdiff(all_indices, c(test, validation))
-
-train_fft <- data.frame()
-for(i in remaining){
-  wav_name <- wavs[[i]]
-  name <- paste0(wav_name, "_fft.csv")
-  file <- read.csv(name)
-  train_fft <- rbind(train_fft,file )
-}
-write.csv(train_fft, "train_fft.csv")
+# test <- c(31,27,29)
+# validation <- c(17, 22,32,28,23)
+# all_indices <- 1:38
+# remaining <- setdiff(all_indices, c(test, validation))
+# 
+# train_fft <- data.frame()
+# for(i in remaining){
+#   wav_name <- wavs[[i]]
+#   name <- paste0(wav_name, "_fft.csv")
+#   file <- read.csv(name)
+#   train_fft <- rbind(train_fft,file )
+# }
+# write.csv(train_fft, "train_fft.csv")
 
 # need to change the number of songs in validation and test
 # assign new annotation numbers so there won't be 2 annotation number 2
