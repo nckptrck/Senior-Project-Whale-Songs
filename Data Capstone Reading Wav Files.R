@@ -115,6 +115,8 @@ merging_data <- function(name, end_freq, step_size,
     # adding the indicator column & annotation (selection) number
     wav_file$song <- 0
     wav_file$annotation_num <- 0
+    # adding a file name key for combining files
+    wav_file$filename <- name
     for(i in 1:nrow(target)){
       begin <- target$begin_time[i]
       end <- target$end_time[i]
