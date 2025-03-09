@@ -679,7 +679,8 @@ test |>
   summarise(n.obs = n(),
             n.rf = sum(rf.pred),
             prop.rf = sum(rf.pred)/n()) |> 
-  count(n.rf > 0)
+  filter(n.rf == 0) #|> 
+  #count(n.rf > 0)
 
 103/116 #proportion of whale songs identified
 
@@ -808,3 +809,240 @@ dat %>%
        y = "Number of Observations",
        fill = "Dataset") +
   scale_y_continuous(breaks = c(5000, 54000, 500000))
+
+
+## Full Training Set (20 .wav files) -------------------------------------------
+
+# Read in data: Run L201-L239 in 'Data Capstone Reading Wav Files.R' to create 
+# master csv
+library(here)
+train_fft <- read_csv(here('train_fft.csv'))
+train_fft$song <- factor(train_fft$song, levels = c(1,0))
+# create cross validation folds
+full_cvs <- vfold_cv(train_fft, v = 5)
+
+
+# MODEL 1: Random Forest -------------------------------------------------------
+recipe_rf <- recipe(song~., data = train_fft) |> 
+  step_rm(time_start, time_end, annotation_num, time_interval, X, `...1`) 
+
+rf_tune <- rand_forest(mtry = tune(), 
+                       min_n = tune(),
+                       trees = 50) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+
+rf_grid <- grid_regular(mtry(c(3,24)),
+                        min_n(),
+                        levels = 6)
+
+rf_tune_wf <- workflow() |> 
+  add_recipe(recipe_rf) |> 
+  add_model(rf_tune)
+
+rf_grid_search <- tune_grid(
+  rf_tune_wf,
+  resamples = full_cvs,
+  grid = rf_grid,
+  metrics = metric_set(roc_auc, precision, recall, f_meas)
+)
+
+# evaluate grid search
+rf_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 10)
+rf_grid_search |> collect_metrics() |> filter(.metric == 'precision') |> slice_max(mean, n = 15)
+rec <- rf_grid_search |> collect_metrics() |> filter(.metric == 'recall') |> slice_max(mean, n = 36)
+rf_grid_search |> collect_metrics() |> filter(.metric == 'f_meas') |> slice_max(mean, n = 10)
+
+
+# mtry = 11, min_n = 32 has high precision while still maintaining high recall
+# make predictions
+rf_mod <- rand_forest(mtry = 11, 
+                      min_n = 32,
+                      trees = 100) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+rf_wf <- workflow() |> 
+  add_recipe(recipe_rf) |> 
+  add_model(rf_mod)
+
+rf.fit <- rf_wf |> fit(train_fft)
+
+validation_fft$`...1` <- NA
+
+validation_fft$pred_rf <- predict(rf.fit, new_data = validation_fft)$.pred_class
+
+
+# calculate metrics
+# Compute accuracy, precision, recall, and F1-score
+validation_fft$song <- factor(validation_fft$song, levels = c(1,0))
+accuracy(validation_fft, truth = song, estimate = pred_rf)
+precision(validation_fft, truth = song, estimate = pred_rf)
+recall(validation_fft, truth = song, estimate = pred_rf)
+f_meas(validation_fft, truth = song, estimate = pred_rf)
+
+# confusion matrix
+conf_mat(validation_fft, truth = song, estimate = pred_rf)
+
+
+# Evaluate on file 6805.230206100827.wav
+
+# false positives
+validation_fft |> 
+  filter(filename == '6805.230206100827',
+         song ==0 & pred_rf ==1) |> 
+  count()
+
+# number of songs missed
+validation_fft |> 
+  filter(filename == '6805.230206100827') |> 
+  mutate(pred_rf = ifelse(as.numeric(pred_rf) == 2,0,1))  |>
+  group_by(annotation_num) |> 
+  summarise(n.obs = n(),
+            n.rf = sum(pred_rf),
+            prop.rf = sum(pred_rf)/n()) |> 
+  count(n.rf > 0)
+
+# MODEL 2: XGBoost -------------------------------------------------------------
+recipe_xgb <- recipe(song~., data = train_fft) |> 
+  step_rm(time_start, time_end, annotation_num, time_interval, X, `...1`) |> 
+  step_normalize(all_numeric_predictors())
+
+
+xgb_grid <- grid_regular(tree_depth(),
+                         min_n(),
+                         loss_reduction(),
+                         mtry(c(3,24)),
+                         learn_rate(),
+                         levels = 3)
+
+xgb_tune <-  boost_tree(trees = 100,
+                        tree_depth = tune(), min_n = tune(),
+                        loss_reduction = tune(), mtry = tune(),        
+                        learn_rate = tune()) |> 
+              set_engine("xgboost") |> 
+              set_mode("classification")
+
+
+xgb_tune_wf <- workflow() |> 
+  add_recipe(recipe_xgb) |> 
+  add_model(xgb_tune)
+
+xgb_grid_search <- tune_grid(
+  xgb_tune_wf,
+  resamples = full_cvs,
+  grid = xgb_grid,
+  metrics = metric_set(roc_auc, precision, recall, f_meas)
+)
+
+
+
+xgb_grid_search |> collect_metrics() |> filter(.metric == 'precision') |> slice_max(mean, n = 20)
+
+xgb_grid_search |> collect_metrics() |> filter(.metric == 'recall',
+                                               mean != 1) |> slice_max(mean, n = 5)
+
+xgb_grid_search |> collect_metrics() |> filter(.metric == 'f_meas') |> slice_max(mean, n = 5)
+
+xgb_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 5)
+
+
+# fit best model
+# this model was in contention for highest precision 
+# also had precision of 0.827 and recall of 0.422
+
+xgb_mod <- boost_tree(trees = 300,
+                      tree_depth = 15, min_n = 21,
+                      loss_reduction = 0.0000562, mtry = 13,        
+                      learn_rate = 0.1) |> 
+  set_engine("xgboost") |> 
+  set_mode("classification")
+
+xgb_wf <- workflow() |> 
+  add_recipe(recipe_xgb) |> 
+  add_model(xgb_mod)
+
+xgb.fit <- xgb_wf |> fit(train_fft)
+
+validation_fft$pred_xgb <- predict(xgb.fit, new_data = validation_fft)$.pred_class
+
+
+
+# calculate metrics
+# Compute accuracy, precision, recall, and F1-score
+validation_fft$song <- factor(validation_fft$song, levels = c(1,0))
+accuracy(validation_fft, truth = song, estimate = pred_xgb)
+precision(validation_fft, truth = song, estimate = pred_xgb)
+recall(validation_fft, truth = song, estimate = pred_xgb)
+f_meas(validation_fft, truth = song, estimate = pred_xgb)
+
+# confusion matrix
+conf_mat(validation_fft, truth = song, estimate = pred_xgb)
+
+
+# Evaluate on file 6805.230206100827.wav
+
+# false positives
+validation_fft |> 
+  filter(filename == '6805.230206100827',
+         song ==0 & pred_xgb ==1) |> 
+  count()
+
+# number of songs missed
+validation_fft |> 
+  filter(filename == '6805.230206100827') |> 
+  mutate(pred_rf = ifelse(as.numeric(pred_rf) == 2,0,1),
+         pred_xgb = ifelse(as.numeric(pred_xgb) == 2,0,1))  |>
+  group_by(annotation_num) |> 
+  summarise(n.obs = n(),
+            n.rf = sum(pred_rf),
+            prop.rf = sum(pred_rf)/n(),
+            n.xgb = sum(pred_xgb),
+            prop.xgb = sum(pred_xgb)/n()) |> 
+  count(n.xgb > 0)
+
+
+
+
+# Combining Model Predictions --------------------------------------------------
+
+
+# create rolling average of predictions
+# n parameter is adjustable: how many rows back
+# n = 30 => 3 second rolling average
+
+predictions.v1 <- validation_fft |>
+  filter(filename == '6805.230206100827') |> 
+  mutate(total.pred = as.numeric(levels(pred_rf))[pred_rf] + 
+           as.numeric(levels(pred_xgb))[pred_xgb],
+         rolling.avg = frollmean(total.pred, n = 30, fill = 0),
+         final_pred = ifelse(rolling.avg>0, 1, 0),
+         pred_number= rleid(final_pred),
+         `Begin Time (s)` = time_start, - 2,
+         `End Time (s)` = time_end- 2) #adjust timeframe proportional to n (3 is too far)
+
+
+# visualize across time
+predictions.v1 |> 
+  ggplot(aes(x = `Begin Time (s)`, y = final_pred)) +
+  geom_line()
+
+
+# export results into same format as the selection tables
+# this will allow us to see our predictions in raven
+selection.table <- predictions.v1 |> 
+  filter(final_pred == 1) |> 
+  group_by(pred_number) |> 
+  summarise( `Begin Time (s)`= min(`Begin Time (s)`),
+             `End Time (s)` = max(`End Time (s)`)) |>
+  mutate(Selection = row_number(),
+         View = "Spectrogram 1",
+         Channel = 1) |> 
+  dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
+
+# write model predictions to .txt
+# this can be put straight into raveen
+write_tsv(selection.table, 'model.pred.6805.230206100827.txt')
+
+
