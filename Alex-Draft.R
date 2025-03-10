@@ -1,25 +1,27 @@
 # ------------------------------- Setup ----------------------------------------
 {
 source("Packages.R")
-source("AWS.R")
-source("Data Capstone Reading Wav Files.R")
+#source("AWS.R")
+#source("Data Capstone Reading Wav Files.R")
 set.seed(1738)
-
+library(here)
 # library(keras)
 # library(tensorflow)
 
 custom_metrics <- metric_set(accuracy, precision, recall, f_meas)
-file <- "6805.230201090825.wav"}
-file <- "6805.230201180825.wav"
-file <- "6805.230201150825.wav"
-
-test <- "6805.230204003826.wav"
-
+}
+{
+# file <- "6805.230201090825.wav"
+# file <- "6805.230201180825.wav"
+# file <- "6805.230201150825.wav"
+# 
+# test <- "6805.230204003826.wav"
+}
 # -------------------------- Getting Wav Names ---------------------------------
-
-wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
-wavs <- as.list(wavs_names$Filename)
-
+{
+  wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
+  wavs <- as.list(wavs_names$Filename)
+}
 
 # ----------------------------- FTT Read-in ------------------------------------
 # need to change this to the files that you want to pull
@@ -29,7 +31,7 @@ df <- merging_data(file, 300, 20, annotated = TRUE)
 # model testing
 
 # -------------------------- STFT Read in Function -----------------------------
-merging_data_stft <- function(name, n = 16384, overlap = 6784, annotated = FALSE, window = NULL){
+merging_data_stft_csv <- function(name, n = 16384, overlap = 6784, freq = 51,annotated = FALSE, window = NULL){
   # grabbing the wav file
   grab_wav_files(name)
   
@@ -39,7 +41,7 @@ merging_data_stft <- function(name, n = 16384, overlap = 6784, annotated = FALSE
   audio4 <- specgram(audio_data, n = n, Fs = audio@samp.rate, overlap = overlap)
   
   # this is taking the magnitude in order to remove the imaginary numbers
-  a <- Mod(audio4$S[1:137,])
+  a <- Mod(audio4$S[1:freq,])
   a <- t(a)
   wav_file <- as.data.frame(a) %>%
     mutate(
@@ -80,10 +82,8 @@ merging_data_stft <- function(name, n = 16384, overlap = 6784, annotated = FALSE
 
 df <- merging_data_stft(test, annotated = TRUE)
 
-write.csv(df, "230204003826_Test_STFT.csv")
-
 # ------------------------------- melfcc ---------------------------------------
-merging_data_melfcc <- function(name, numcep, maxfreq, wintime, hoptime, annotated = FALSE){
+merging_data_melfcc_csv <- function(name, numcep, maxfreq, wintime, hoptime, annotated = FALSE){
   grab_wav_files(name)
   audio <- readWave(name)
   
@@ -132,13 +132,12 @@ df <- df1
 
 # ----------------------------- Creating CSVs -----------------------------------
 start <- wavs[[31]]
-wavs_subset <- wavs[31:length(wavs)]
+wavs_subset <- wavs[c(31,27,29)]
 for (i in wavs_subset) {
   name <- paste0(i, ".wav")
-  merging_data_melfcc(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
+  merging_data_melfcc_csv(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
   rm(wav_file)
   gc()
-
 }
 
 test <- c(31,27,29)
@@ -147,14 +146,16 @@ all_indices <- 1:38
 remaining <- setdiff(all_indices, c(test, validation))
 
 
-train_melfcc <- data.frame()
-for(i in remaining){
+test_melfcc <- data.frame()
+for(i in test){
   wav_name <- wavs[[i]]
   name <- paste0(wav_name, "_melfcc.csv")
   file <- read.csv(name)
-  train_melfcc <- rbind(train_melfcc,file )
+  file <- file |> 
+    mutate(file_name = wav_name)
+  test_melfcc <- rbind(test_melfcc,file )
 }
-write.csv(train_melfcc, "train_melfcc.csv")
+write.csv(test_melfcc, "test_melfcc.csv")
 
 validation_stft <- data.frame()
 for(i in remaining){
@@ -166,6 +167,10 @@ for(i in remaining){
   gc()
 }
 write.csv(validation_stft, "training_stft.csv")
+
+
+
+# this 
 
 ## ----------------------- Melfcc Documentation --------------------------------
 audio <- readWave(file)
@@ -239,27 +244,63 @@ df_cvs <- vfold_cv(df, v = 5)
 
 
 # --------------------------- Train/Test Split ---------------------------------
-df1 <- read.csv(here("230201090825_STFT.csv"))
-df2 <- read.csv(here("230201180825_STFT.csv"))
-df3 <- read.csv(here("230201150825_STFT.csv"))
-df_test <- read.csv(here("230204003826_Test_STFT.csv"))
-df <- rbind(df1, df2, df3)
+
+fix_annotation_num <- function(file){
+  file <- file |> 
+    mutate(filenumber = cumsum(time_start == 0.0),
+           time_interval = 1 + cumsum(song != lag(song, default = first(song))),) |> 
+    dplyr::select(-X,-X.1)
+  file$song <- factor(file$song, levels = c(1,0))
+  write.csv(file, "test_melfcc.csv")
+}
+
+test_melfcc <- read.csv(here("test_melfcc.csv"))
+fix_annotation_num(test_melfcc)
+
+
+df_stft_train <- read.csv(here("training_stft.csv"))
+df_stft_validation <- read.csv(here("validation_stft.csv"))
+df_stft_test <- read.csv(here("test_stft.csv"))
+
+
+df_melfcc_train <- read.csv(here("train_melfcc.csv"))
+df_melfcc_validation <- read.csv(here("validation_melfcc.csv"))
+df_melfcc_test <- read.csv(here("test_melfcc.csv"))
+
+
+# Slicing the train set
+{
+  df_train <- df_stft_train |> 
+    mutate(filenumber = cumsum(time_start == 0.0),
+           song = as.factor(song)) |> 
+    dplyr::select(V1:V51, everything()) |>
+    dplyr::select(-X,-X.1)
+  unique_file_numbers <- unique(df_train$filenumber)
+  random_file_numbers <- sample(unique_file_numbers, 20, replace = FALSE)
+  first_10_from_20 <- random_file_numbers_20[1:10]
+  df_train <- df_train|> 
+    filter(filenumber %in% first_10_from_20)
+  write.csv(df_train, "df_stft_train_10_files.csv")
+df_cvs <- vfold_cv(df_train, v = 5)  
+  rm(df_stft_train)
+  gc()
+}
+
+df_test <- df_test |> 
+  mutate(song = as.factor(song))
+#df_test <- df[13001:nrow(df), ]
+df_validation <- df_melfcc_validation|> 
+  mutate(song = as.factor(song))
+
+# Recipes
 
 {
-  df_train <- df |> 
-    mutate(song = as.factor(song)) |> 
-    dplyr::select(-X)
-  df_test <- df_test |> 
-    mutate(song = as.factor(song))
-#df_test <- df[13001:nrow(df), ]
-df_cvs <- vfold_cv(df_train, v = 5)
-
 whale_recipe <- recipe(song ~ ., data = df_train) |> 
-  step_rm(time_start, time_end, annotation_num, time_interval)
+  step_rm(time_start, time_end, annotation_num, time_interval,filenumber)
 # step_rm(time_start, time_end.x, time_end.y,annotation_num) 
 
 whale_recipe_knn <- recipe(song~., data = df_train) |> 
-  step_rm(time_start, time_end, annotation_num, time_interval) |> 
+  step_rm(time_start, time_end, annotation_num, time_interval,filenumber) |> 
   step_normalize(all_numeric_predictors())
 }
 
@@ -267,8 +308,8 @@ whale_recipe_knn <- recipe(song~., data = df_train) |>
 
 {
   whale_rf <- rand_forest(mtry = tune(), 
-                        min_n = tune(), 
-                        trees = tune()) |> 
+                        min_n = tune(),
+                        trees = 20) |> 
   set_engine("ranger") |> 
   set_mode("classification")
 
@@ -277,11 +318,10 @@ whale_wrkf <- workflow() |>
   add_recipe(whale_recipe) |> 
   add_model(whale_rf) 
 
-rf_grid <- grid_regular(mtry(c(1,10)),
-                        min_n(c(1,10)),
-                        trees(c(1,30)),
-                        levels = 20)
-}
+rf_grid <- grid_regular(mtry(c(1,30)),
+                        min_n(c(1,30)),
+                        levels = 3)
+} # will probably take an hour
 
 rf_grid_search <-
   tune_grid(
@@ -291,9 +331,11 @@ rf_grid_search <-
     metrics = custom_metrics
   )
 
-tuning_metrics <- rf_grid_search %>% collect_metrics()|> filter(.metric == "precision") %>%  slice_max(mean)
+rf_grid_search %>% collect_metrics()|> filter(.metric == "precision")
 
-# mtry = 30 , min_n = 20
+# mtry = 10 , min_n = 10, 0.983     5 0.000145
+# min_n = 33, 0.983     5 0.000152
+# 1         1 precision binary     0.983     5 0.000199
 
 # ------------------------------ KNN Model -------------------------------------
 
@@ -316,11 +358,23 @@ knn_grid_search <- tune_grid(knn_tune_wf,
 
 knn_grid_search |> collect_metrics() |> filter(.metric == 'precision')
 
+best_knn <- select_best(knn_grid_search, metric = "precision")
+
+knn_final <- finalize_model(knn_tune, best_knn)
+
+knn_final <- nearest_neighbor(neighbors = 30) |> 
+  set_engine('kknn') |> 
+  set_mode("classification")
+knn_final_wf <- workflow() |> 
+  add_recipe(whale_recipe_knn) |> 
+  add_model(knn_final)
+knn_final_fit <- knn_final_wf |> fit(df_train)
+
 
 # ------------------------- Training & Testing ---------------------------------
 
-whale_rf_best <- rand_forest(mtry = 30,
-                             min_n = 20,
+whale_rf_best <- rand_forest(mtry = 10,
+                             min_n = 33,
                              trees = 1000) %>%
   set_engine("ranger", importance = "impurity") %>%
   set_mode("classification")
@@ -333,20 +387,210 @@ final_model <- fit(whale_wrkf_best, data = df_train)
 df_test$rf.pred <- predict(final_model, new_data = df_test)$.pred_class
 
 
-# fitting best model (Precision)
-knn <- nearest_neighbor(neighbors = 30) %>%
-  set_engine("kknn") %>%
-  set_mode("classification")
+# random forest
 
-knn_wf <- workflow() |> 
-  add_recipe(whale_recipe_knn) |> 
-  add_model(knn)
-knn_fit <- knn_wf |> fit(df_train)
+df_validation$rf.pred <- predict(final_model, new_data = df_validation)$.pred_class
+validation_metrics <- df_validation %>%
+  metrics(truth = song, estimate = rf.pred)
+print(validation_metrics)
 
-# predict on test set
-df_test$knn.pred <- predict(knn_fit, new_data = df_test)$.pred_class
+conf_mat(df_validation, truth = song, estimate = rf.pred)
+
+  
+melf_val_res <- df_validation |> 
+  mutate(rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1),
+         knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
+         y.song = ifelse(as.numeric(time_interval)%% 2 ==0, "yes", "no")) |> 
+  group_by(time_interval,filenumber, y.song) |> 
+  summarise(n.obs = n(),
+    n.rf.roc = sum(rf.pred),
+    n.knn = sum(knn.pred),
+    t.f.postives.rf = n.obs - n.rf.roc,
+    t.f.postivies.knn = n.obs - n.knn,
+    .groups = "drop") 
+
+write.csv(melf_val_res,"melfcc_val_res_knn30_rf10_33.csv")
+
+df_test$rf.pred <- predict(rf_final_fit, new_data = df_test)$.pred_class
+test_metrics <- df_test %>%
+  metrics(truth = song, estimate = rf.pred)
+print(test_metrics)
 
 
+# Knn
+
+
+df_validation$knn.pred <- predict(knn_final_fit, new_data = df_validation)$.pred_class
+validation_metrics <- df_validation %>%
+  metrics(truth = song, estimate = knn.pred)
+print(validation_metrics)
+
+# Final evaluation on the test set
+df_test$knn.pred <- predict(knn_final_fit, new_data = df_test)$.pred_class
+test_metrics <- df_test %>%
+  metrics(truth = song, estimate = knn.pred)
+print(test_metrics)
+
+
+# -------------------------- Merging Results -----------------------------------
+{
+  melfcc_valid <- read.csv("melfcc_val_res_full.csv")
+  stft_valid <- read.csv("stft_val_res_full.csv")
+  melfcc_valid <- melfcc_valid |> 
+    dplyr::select(-X, -time_interval) |> 
+    rename(knn.pred.mel = knn.pred,
+           rf.pred.mel = rf.pred)
+  stft_valid <- stft_valid |> 
+    dplyr::select(-X, -time_interval)
+  df_valid <- merge(stft_valid, melfcc_valid, by = c("time_start","time_end","filenumber", "song","annotation_num"), all.x = TRUE)
+  
+  df_valid <- arrange(df_valid, filenumber)
+  
+  df_valid[is.na(df_valid)] <- 0
+}
+
+df_valid <- read.csv("val_res_full.csv")
+
+valid_results <-  df_valid |> 
+  group_by(filenumber, annotation_num) |> 
+  summarise(n.obs = n(),
+            n.knn.stft = sum(knn.pred.stft),
+            n.knn.mel = sum(knn.pred.mel),
+            n.rf.stft = sum(rf.pred.stft),
+            n.rf.mel = sum(rf.pred.mel))
+# for seeing where there there is difference in predicitong the annotation number
+valid_results |> 
+  filter(n.knn.stft == 0| n.knn.mel ==0 | n.rf.stft == 0 | n.rf.mel == 0)
+
+
+# for where no model predicts the model and how many different songs
+valid_results |> 
+  filter(n.knn.stft == 0& n.knn.mel ==0 & n.rf.stft == 0 & n.rf.mel == 0) |> 
+  group_by(filenumber) |> 
+  summarise(total = sum(n()))
+
+df_valid %>%
+  group_by(filenumber, anno) %>%  # Regroup by filenumber
+  filter(song == 1) |> 
+  summarise(
+    total_n.obs = sum( n()),
+    total_n.knn.stft = sum(sum(knn.pred.stft)),
+    total_n.knn.mel = sum(sum(knn.pred.mel)),
+    total_n.rf.stft = sum(sum(rf.pred.stft)),
+    total_n.rf.mel = sum(sum(rf.pred.mel))
+  )
+
+# ------------------------ Stores Results separate csv -------------------------
+{
+  knn_final <- nearest_neighbor(neighbors = 30) |> 
+    set_engine('kknn') |> 
+    set_mode("classification")
+  knn_final_wf <- workflow() |> 
+    add_recipe(whale_recipe_knn) |> 
+    add_model(knn_final)
+  knn_final_fit <- knn_final_wf |> fit(df_train)
+  df_validation$knn.pred <- predict(knn_final_fit, new_data = df_validation)$.pred_class
+  
+  whale_rf_best <- rand_forest(mtry = 10,
+                               min_n = 33,
+                               trees = 1000) %>%
+    set_engine("ranger", importance = "impurity") %>%
+    set_mode("classification")
+  
+  whale_wrkf_best <- workflow() |>
+    add_recipe(whale_recipe) |> 
+    add_model(whale_rf_best)
+  
+  final_model <- fit(whale_wrkf_best, data = df_train)
+  df_validation$rf.pred <- predict(final_model, new_data = df_validation)$.pred_class
+}
+
+df_valid_res <- df_validation |> 
+  dplyr::select(time_start,time_end,song,annotation_num,time_interval,filenumber,knn.pred,rf.pred)
+
+write.csv(df_valid_res, "melfcc_val_res_full.csv")
+
+## adding file names to validation test.csv
+test <- c(31,27,29)
+validation <- c(17, 22,32,28,23)
+
+#results <- read.csv("")
+
+
+
+split_results <- split(df_valid, df_valid$filenumber)
+
+for (file_num in names(split_results)) {
+  name <- paste0(wavs[validation[as.numeric(file_num)]], "_s_m_res")
+  file_name <- paste0(name, ".csv")  # Create a unique file name
+  write.csv(split_results[[file_num]], file_name, row.names = FALSE)
+  cat("Written:", file_name, "\n")
+}
+
+
+
+# ---------------------- 230206100827 to selection table -----------------------
+
+to_selection_table <- function(name # ex. 6805.230205030826
+                               ){
+  pred <- read.csv(paste0(name,"_s_m_res.csv"))
+  
+  # predictions.v1 <- pred |> 
+  #   mutate(total.pred = as.numeric(levels(knn.pred.mel))[knn.pred.mel] + 
+  #          as.numeric(levels(knn.pred.stft))[knn.pred.stft] +
+  #           as.numeric(levels(rf.pred.stft))[rf.pred.stft] +
+  #           as.numeric(levels(rf.pred.mel))[rf.pred.mel] ,
+  #        rolling.avg = frollmean(total.pred, n = 30, fill = 0),
+  #        final_pred = ifelse(rolling.avg>0, 1, 0),
+  #        pred_number= rleid(final_pred),
+  #        `Begin Time (s)` = time_start, - 2,
+  #        `End Time (s)` = time_end - 2) #adjust timeframe proportional to n (3 is too far)
+  predictions.v1 <- pred |> 
+    mutate(total.pred = as.numeric(as.character(knn.pred.mel)) + 
+             as.numeric(as.character(knn.pred.stft)) +
+             as.numeric(as.character(rf.pred.stft)) +
+             as.numeric(as.character(rf.pred.mel)),
+           rolling.avg = frollmean(total.pred, n = 30, fill = 0),
+           final_pred = ifelse(rolling.avg>0, 1, 0),
+           pred_number = rleid(final_pred),
+           `Begin Time (s)` = time_start - 2,
+           `End Time (s)` = time_end - 2)
+  
+  # visualize across time
+  predictions.v1 |> 
+    filter(final_pred != 0) |> 
+    slice(1:100) |>
+    ggplot(aes(x = `Begin Time (s)`)) +
+    geom_point(aes(y = 1, color = "Prediction"), size = 1) +
+    # Assuming you have a column representing song presence
+    geom_point(aes(y = 1, color = "Song"), size = .5, alpha = .3) +
+    scale_color_manual(values = c("Prediction" = "blue", "Song" = "red")) +
+    labs(y = "Presence", color = "Type") +
+    theme_minimal()
+  
+  selection.table <- predictions.v1 |> 
+    filter(final_pred == 1) |> 
+    group_by(pred_number) |> 
+    summarise( `Begin Time (s)`= min(`Begin Time (s)`),
+               `End Time (s)` = max(`End Time (s)`)) |>
+    mutate(Selection = row_number(),
+           View = "Spectrogram 1",
+           Channel = 1) |> 
+    dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
+  
+  # write model predictions to .txt
+  # this can be put straight into raveen
+  write_tsv(selection.table, paste0("pred.stft.melfcc.",name ,".txt"))
+}
+
+
+
+
+
+# ---------------------- Pipeline Writing SS for the test ----------------------
+
+
+#
 # ------------------------------ Results ---------------------------------------
 
 importance_scores <- final_model$fit$fit$fit$variable.importance
@@ -418,6 +662,46 @@ res <- res |>
   mutate(true_positives = n.obs - n.knn)
 
 write.csv(res, "230204003826 using STFT knn = 30.csv")
+
+# ----------------------- Comparing results in Raven ---------------------------
+file <- read.csv("230204030826_melfcc_res.csv") 
+file <- read.csv("230205000826_melfcc_res.csv") 
+file <- read.csv("230206100827_melfcc_res.csv") 
+
+file <- read.csv("230205210826_melfcc_res.csv")
+file <- read.csv("230205030826_melfcc_res.csv")
+
+# file <-file |> 
+#   filter(knn.pred == 1 | rf.pred == 1 | song == 1 )
+write.csv(manual_errors, "230206100827_melfcc_false_postives.csv")
+
+
+{
+  manual_errors <- file |> 
+    filter(song != 1) |> 
+    dplyr::select(time_start, time_end, knn.pred, rf.pred)
+  # they are all good not sure how to add that as a column   230204030826
+  
+  # I think these should also all be good but havent listen to it yet 230205000826
+  # 15,16 is before call 84 and I think is in the same song just not annotated
+  # there are 1 song missing where neither predicts the other 3 have one prediction from either knn or rf
+  
+  # 230206100827 
+  # missed 45, 91,97, 105, 112 without a knn or rf
+  # rf has a guess at 7 songs that knn missed completely
+  
+  
+  
+  res <- file |> 
+    group_by(annotation_num) |> 
+    summarise(n.obs = n(),
+              n.knn = sum(knn.pred),
+              n.rf = sum(rf.pred)
+    ) 
+  
+  res |> 
+    count( n.knn > 0 | n.rf > 0)
+}
 
 # ---------------------- Testing on Another Annotated File ---------------------
 
