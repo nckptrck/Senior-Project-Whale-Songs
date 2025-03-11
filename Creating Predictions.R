@@ -152,97 +152,100 @@ create_selection_table <- function(name, # ex. "6805.230201090825.wav"
 }
 name <- "6805.230205170826.wav"
 
-mtry_n <- 15
-min_n_n <-  30
-
-n <- 30
-create_selection_table(name = name, mtry_n = 15, min_n_n = 30, n = 30,
-                      numcep = 13, maxfreq = 600, wintime = .2, hoptime = .1,
-                       mtry_n_m = 10, min_n_n_m = 33, n_m = 30)
+# mtry_n <- 15
+# min_n_n <-  30
+# 
+# n <- 30
+# create_selection_table(name = name, mtry_n = 15, min_n_n = 30, n = 30,
+#                       numcep = 13, maxfreq = 600, wintime = .2, hoptime = .1,
+#                        mtry_n_m = 10, min_n_n_m = 33, n_m = 30)
 
 
 # ------------------------ Setting up the Fitted models ------------------------
 
-{
-  df_train <- read.csv("train_melfcc.csv")
-  df_train <- df_train |> 
-    dplyr::select(-X, -X.1, -annotation_num, -time_interval, )
-  df_train$song <- factor(df_train$song)
-  
-  # This is for Random Forest
-  whale_recipe <- recipe(song ~ ., data = df_train) |> 
-    step_rm(time_start, time_end)
-  
-  whale_rf <- rand_forest(mtry = 10,
-                          min_n = 33,
-                          trees = 1000) |>
-    set_engine("ranger") |>
-    set_mode("classification")
-  
-  whale_wrkf <- workflow() |>
-    add_recipe(whale_recipe) |>
-    add_model(whale_rf)
-  
-  rf_final_melfcc <- fit(whale_wrkf, data = df_train)
-  print("melfcc rf done")
-
-  rm(final_model)
-  # This is for K Nearest Neighbors
-  whale_recipe_knn <- recipe(song~., data = df_train) |> 
-    step_rm(time_start, time_end) |> 
-    step_normalize(all_numeric_predictors())
-  
-  knn_final <- nearest_neighbor(neighbors = 30) |>
-    set_engine('kknn') |>
-    set_mode("classification")
-  knn_final_wf <- workflow() |>
-    add_recipe(whale_recipe_knn) |>
-    add_model(knn_final)
-  knn_final_melfcc <- knn_final_wf |> fit(df_train)
-  print("melfcc knn done")
-  
-  df_train <- read.csv("df_stft_train_10_files.csv")
-  df_train <- df_train |> 
-    dplyr::select(-X, -annotation_num, -time_interval, -filenumber)
-  df_train$song <- factor(df_train$song)
-  
-  # This is for Random Forest
-  whale_recipe <- recipe(song ~ ., data = df_train) |> 
-    step_rm(time_start, time_end)
-  
-  whale_rf <- rand_forest(mtry = 15,
-                          min_n = 30,
-                          trees = 1000) |>
-    set_engine("ranger") |>
-    set_mode("classification")
-  
-  whale_wrkf <- workflow() |>
-    add_recipe(whale_recipe) |>
-    add_model(whale_rf)
-  
-  rf_final_stft <- fit(whale_wrkf, data = df_train)
-  print("stft rf done")
-
-  # This is for K Nearest Neighbors
-  whale_recipe_knn <- recipe(song~., data = df_train) |> 
-    step_rm(time_start, time_end) |> 
-    step_normalize(all_numeric_predictors())
-  
-  knn_final <- nearest_neighbor(neighbors = n) |>
-    set_engine('kknn') |>
-    set_mode("classification")
-  knn_final_wf <- workflow() |>
-    add_recipe(whale_recipe_knn) |>
-    add_model(knn_final)
-  knn_final_stft <- knn_final_wf |> fit(df_train)
-  print("stft knn done")
-}
+# {
+#   df_train <- read.csv("train_melfcc.csv")
+#   df_train <- df_train |> 
+#     dplyr::select(-X, -X.1, -annotation_num, -time_interval)
+#   df_train$song <- factor(df_train$song)
+#   
+#   # This is for Random Forest
+#   whale_recipe <- recipe(song ~ ., data = df_train) |> 
+#     step_rm(time_start, time_end)
+#   
+#   whale_rf <- rand_forest(mtry = 10,
+#                           min_n = 33,
+#                           trees = 1000) |>
+#     set_engine("ranger") |>
+#     set_mode("classification")
+#   
+#   whale_wrkf <- workflow() |>
+#     add_recipe(whale_recipe) |>
+#     add_model(whale_rf)
+#   
+#   rf_final_melfcc <- fit(whale_wrkf, data = df_train)
+#   print("melfcc rf done")
+# 
+#   rm(final_model)
+#   # This is for K Nearest Neighbors
+#   whale_recipe_knn <- recipe(song~., data = df_train) |> 
+#     step_rm(time_start, time_end) |> 
+#     step_normalize(all_numeric_predictors())
+#   
+#   knn_final <- nearest_neighbor(neighbors = 30) |>
+#     set_engine('kknn') |>
+#     set_mode("classification")
+#   knn_final_wf <- workflow() |>
+#     add_recipe(whale_recipe_knn) |>
+#     add_model(knn_final)
+#   knn_final_melfcc <- knn_final_wf |> fit(df_train)
+#   print("melfcc knn done")
+#   
+#   df_train <- read.csv("df_stft_train_10_files.csv")
+#   df_train <- df_train |> 
+#     dplyr::select(-X, -annotation_num, -time_interval, -filenumber)
+#   df_train$song <- factor(df_train$song)
+#   
+#   # This is for Random Forest
+#   whale_recipe <- recipe(song ~ ., data = df_train) |> 
+#     step_rm(time_start, time_end)
+#   
+#   whale_rf <- rand_forest(mtry = 15,
+#                           min_n = 30,
+#                           trees = 1000) |>
+#     set_engine("ranger") |>
+#     set_mode("classification")
+#   
+#   whale_wrkf <- workflow() |>
+#     add_recipe(whale_recipe) |>
+#     add_model(whale_rf)
+#   
+#   rf_final_stft <- fit(whale_wrkf, data = df_train)
+#   print("stft rf done")
+# 
+#   # This is for K Nearest Neighbors
+#   whale_recipe_knn <- recipe(song~., data = df_train) |> 
+#     step_rm(time_start, time_end) |> 
+#     step_normalize(all_numeric_predictors())
+#   
+#   knn_final <- nearest_neighbor(neighbors = 30) |>
+#     set_engine('kknn') |>
+#     set_mode("classification")
+#   knn_final_wf <- workflow() |>
+#     add_recipe(whale_recipe_knn) |>
+#     add_model(knn_final)
+#   knn_final_stft <- knn_final_wf |> fit(df_train)
+#   print("stft knn done")
+# }
 
 # this will save the final models so we dont have to load fit them everytime for a new file
-saveRDS(rf_final_melfcc, "rf_final_melfcc.rds")
-saveRDS(knn_final_melfcc, "knn_final_melfcc.rds")
-saveRDS(rf_final_stft, "rf_final_stft.rds")
-saveRDS(knn_final_stft,"knn_final_stft.rds")
+  # {
+  #   saveRDS(rf_final_melfcc, "rf_final_melfcc.rds")
+  #   saveRDS(knn_final_melfcc, "knn_final_melfcc.rds")
+  #   saveRDS(rf_final_stft, "rf_final_stft.rds")
+  #   saveRDS(knn_final_stft,"knn_final_stft.rds")
+  # }
+
 
 # example
 # knn_final_stft <- readRDS("knn_final_stft.rds")
