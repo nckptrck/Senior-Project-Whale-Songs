@@ -950,7 +950,6 @@ xgb_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_ma
 
 # fit best model
 # this model was in contention for highest precision 
-# also had precision of 0.827 and recall of 0.422
 
 xgb_mod <- boost_tree(trees = 300,
                       tree_depth = 15, min_n = 21,
@@ -969,7 +968,7 @@ validation_fft$pred_xgb <- predict(xgb.fit, new_data = validation_fft)$.pred_cla
 
 
 
-# calculate metrics
+ # calculate metrics
 # Compute accuracy, precision, recall, and F1-score
 validation_fft$song <- factor(validation_fft$song, levels = c(1,0))
 accuracy(validation_fft, truth = song, estimate = pred_xgb)
@@ -1020,7 +1019,7 @@ predictions.v1 <- validation_fft |>
          final_pred = ifelse(rolling.avg>0, 1, 0),
          pred_number= rleid(final_pred),
          `Begin Time (s)` = time_start, - 2,
-         `End Time (s)` = time_end- 2) #adjust timeframe proportional to n (3 is too far)
+         `End Time (s)` = time_end - 2) #adjust timeframe proportional to n (3 is too far)
 
 
 # visualize across time
@@ -1046,3 +1045,231 @@ selection.table <- predictions.v1 |>
 write_tsv(selection.table, 'model.pred.6805.230206100827.txt')
 
 
+
+## Functionalize ---------------------------------------------------------------
+
+# Input: data frame w/ times and model predictions / size of rolling average (0.1s) / 
+# Output: selection table built by our model
+get_model_predictions <- function(preds,t = 30, write = F){
+  # extract filename for output
+  name <- preds$filename[1]
+  output <- preds |> 
+    # add other models into total.pred
+    mutate(total.pred = as.numeric(levels(pred_rf))[pred_rf] + 
+             as.numeric(levels(pred_xgb))[pred_xgb],
+           rolling.avg = frollmean(total.pred, n = t, fill = 0),
+           final_pred = ifelse(rolling.avg>0, 1, 0),
+           pred_number= rleid(final_pred),
+           `Begin Time (s)` = time_start, - (t/10),
+           `End Time (s)` = time_end - (t/10) ) |> 
+    filter(final_pred == 1) |> 
+    group_by(pred_number) |> 
+    summarise( `Begin Time (s)`= min(`Begin Time (s)`),
+               `End Time (s)` = max(`End Time (s)`)) |>
+    mutate(Selection = row_number(),
+           View = "Spectrogram 1",
+           Channel = 1) |> 
+    dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
+  
+  path <- paste0("model.pred.", name, ".txt", sep = "")
+  if(write){
+  write_tsv(output, path)
+  }
+  output
+}
+
+
+# example usage:
+
+ex <- predictions.v1 |> 
+  dplyr::select(filename, time_start, time_end, pred_rf, pred_xgb)
+
+get_model_predictions(ex)
+
+
+
+# Metrics ----------------------------------------------------------------------
+
+
+library(janitor)
+# import example selection table 
+sel_table <- sel_table |> 
+  dplyr::filter(View == "Spectrogram 1") |> 
+  dplyr::select(`Begin Time (s)`, `End Time (s)`)
+
+sel_table
+
+wide_model_preds <- wide_model_preds |> 
+  dplyr::filter(View == "Spectrogram 1") |> 
+  dplyr::select(`Begin Time (s)`, `End Time (s)`)
+
+
+precise_model_preds <- precise_model_preds |> 
+  dplyr::filter(View == "Spectrogram 1") |> 
+  dplyr::select(`Begin Time (s)`, `End Time (s)`)
+
+
+precise_model_preds
+
+# Function: Get Metrics --------------------------------------------------------
+get_metrics <- function(preds,truth){
+  # loop through model predictions
+  # define true and false positives
+  tp <- 0
+  fp <- 0
+  total <- nrow(truth)
+  for(i in 1:nrow(preds)) {
+    row <- preds[i,]
+    p.begin <- row$`Begin Time (s)`
+    p.end <- row$`End Time (s)`
+    # loop through selection table
+    flag <- FALSE
+    for(j in 1:nrow(truth)){
+      trow <- truth[j,]
+      t.begin <- trow$`Begin Time (s)`
+      t.end <- trow$`End Time (s)`
+      if(max(t.begin,p.begin) - min(t.end,p.end) <= 1){ # check if they overlap (within 1s)
+        tp <- tp + 1
+        flag <- T
+      }
+    }
+    if(!flag){ # check if there was no overlap (false positive)
+      fp <- fp + 1
+    }
+  }
+  # number of missed annotations
+  fn <- total - tp
+  if(fn < 0){
+    fn <- 0
+  }
+  
+  # precision and recall
+  p <- tp / (tp + fp)
+  r <- tp/total
+  return(list('Total Calls' = total,
+              'Precision' = p,
+              'Recall' = r,
+              'Detected Calls' = tp,
+              'False Positives' = fp,
+              'Missed Calls' = fn))
+}
+
+# Micro Metrics
+get_metrics(precise_model_preds,sel_table)
+
+# Macro Metrics (predictions from big model)
+get_metrics(wide_model_preds,sel_table)
+
+# Get Metrics for all 5 validation files ---------------------------------------
+library(here)
+
+# input: data - dataframe containing validation predictions (input to get_model_predictions)
+#        wavs - list of all annotated filnames
+#        validation_idx - index of validation files (to index wavs)
+#        wide_grid - grid for rolling average time (wide predictions)
+#        precise_grid - grid for rolling average time (precise predictions)
+
+# output: results of grid search including filename, prediction type, t, and metrics
+
+
+validation_metrics <- function(data,
+                               wavs,
+                               validation_idx,
+                               wide_grid, p_grid){
+  # create dataframe for results
+  results <- data.frame(filename = character(),
+                       prediction = character(),
+                       Total.Calls = numeric(),
+                       Precision = numeric(),
+                       Recall = numeric(),
+                       Detected.Calls = numeric(),
+                       False.Positives = numeric(),
+                       Missed.Calls = numeric(),
+                       len.avg = numeric())
+  # loop through validation files
+  for(f_name in wavs[validation_idx]){
+    # read in selection table (stored in validation folder in R project)
+    truth <- read_delim(here(paste('validation/',f_name, "-SS.txt", sep = "")),
+                      delim = "\t", escape_double = FALSE, 
+                      trim_ws = TRUE)
+    # remove duplicate time annotations
+    truth <- truth |> 
+      dplyr::filter(View == "Spectrogram 1")
+    
+    # filter data frame to specific file
+    predictions <- data |>
+      filter(filename == f_name) |> 
+      dplyr::select(filename, time_start, time_end, pred_rf, pred_xgb)
+    for(t in wide_grid){
+        # make predictions
+        wide_preds <- get_model_predictions(predictions,t = t)
+        
+        # get metrics
+        wide_metrics <- data.frame(get_metrics(wide_preds, truth))
+        precise_metrics <- data.frame(get_metrics(precise_preds, truth))
+        
+        # format for output
+        wide_metrics <- wide_metrics |> mutate(filename = f_name,
+                                               prediction = "wide",
+                                               len.avg = t)
+        # add to data frame
+        results <- rbind(results,wide_metrics)
+    }
+    for(t in p_grid){
+      # make predictions
+      precise_preds <- get_model_predictions(predictions,t = t)
+      
+      # get metrics
+      precise_metrics <- data.frame(get_metrics(precise_preds, truth))
+      # format for output
+      precise_metrics <- precise_metrics |> mutate(filename = f_name,
+                                                   prediction = "precise",
+                                                   len.avg = t)
+      # add to data frame
+      results <- rbind(results,precise_metrics)
+    }
+    
+  }
+  # format results
+  results |> 
+    dplyr::select(filename, prediction, len.avg,
+                  Total.Calls, Detected.Calls, False.Positives, Missed.Calls,
+                  Precision, Recall)
+}
+
+# example usage
+wide_grid <- seq(100,600, by = 50)
+p_grid <- seq(5,50, by = 5)
+# validation_fft has both model predictions
+# wavs has all the filenames (38 annotated)
+# validation has the validation indices from reading wav files.R
+# validation files: 17, 22, 32, 28, 23, 14, 13, 8, 36, 9
+
+# save/load models
+# save(xgb.fit, file = "fft_xgb.Rdata")
+# save(rf.fit, file = "fft_rf.Rdata")
+xgb.fit <- load(here('fft_xgb.Rdata'))
+rf.fit <- load(here('fft_rf.Rdata'))
+
+# make predictions
+validation_fft$`...1` <- NA
+validation_fft$pred_xgb <- predict(xgb.fit, new_data = validation_fft)$.pred_class
+validation_fft$pred_rf <- predict(rf.fit, new_data = validation_fft)$.pred_class
+
+# get validation results
+results <- validation_metrics(validation_fft, wavs, validation, wide_grid, p_grid)
+
+
+# explore results
+results
+
+results |> 
+  group_by(prediction, len.avg) |> 
+  summarise(mean.precision = mean(Precision),
+            sd.precision = sd(Precision),
+            mean.recall = mean(Recall),
+            sd.recall = sd(Recall)) |> 
+    slice_max(mean.recall, n = 10)
+
+results |> 
+  filter(len.avg == 10)
