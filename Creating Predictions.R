@@ -15,8 +15,6 @@
 
 # do not run need to update the helper function accomodate the need rds fitted models
 
-
-
 # -------------------- helper functions for the one below ----------------------
 merging_data_stft <- function(audio, n = 16384, overlap = 6784, freq = 51, window = NULL){
   audio_data <- as.numeric(audio@left)
@@ -33,12 +31,7 @@ merging_data_stft <- function(audio, n = 16384, overlap = 6784, freq = 51, windo
   return (wav_file)
 }
 
-stft_pipeline <- function(audio, # this is after the readWave dataframe
-                          stft_train,
-                          mtry_n, # this is for random forest
-                          min_n_n, # this is for random forest
-                          n # this is for knn
-){
+stft_pipeline <- function(audio){
   df <- merging_data_stft(audio)
   rf_stft <- readRDS("rf_final_melfcc.rds")
   df$rf.pred.stft <- predict(rf_stft, new_data = df)$.pred_class
@@ -66,11 +59,7 @@ merging_data_melfcc <- function(audio, numcep, maxfreq, wintime, hoptime){
   return (wav_file)
 }
 
-melfcc_pipeline <- function(audio, melfcc_train, numcep, maxfreq, wintime, hoptime,
-                            mtry_n_m, # this is for random forest
-                            min_n_n_m, # this is for random forest
-                            n_m # this is for knn
-){
+melfcc_pipeline <- function(audio, numcep, maxfreq, wintime, hoptime){
   df <- merging_data_melfcc(audio, numcep, maxfreq, wintime, hoptime)
   rf_melfcc <- readRDS("rf_final_melfcc.rds")
   df$rf.pred.mel <- predict(rf_melfcc, new_data = df)$.pred_class
