@@ -41,11 +41,12 @@ stft_pipeline <- function(audio, # this is after the readWave dataframe
 ){
   df <- merging_data_stft(audio)
   rf_stft <- readRDS("rf_final_melfcc.rds")
-  df$rf.pred.stft <- predict(final_model, new_data = df)$.pred_class
-
+  df$rf.pred.stft <- predict(rf_stft, new_data = df)$.pred_class
+  rm(rf_stft)
   # This is for K Nearest Neighbors
   knn_stft <- readRDS("knn_final_stft.rds")
-  df$knn.pred.stft <- predict(knn_final_fit, new_data = df)$.pred_class
+  df$knn.pred.stft <- predict(knn_stft, new_data = df)$.pred_class
+  rm(knn_stft)
   df <- df |> 
     dplyr::select("time_start","time_end","knn.pred.stft","rf.pred.stft")
   print("STFT is complete")
@@ -73,9 +74,11 @@ melfcc_pipeline <- function(audio, melfcc_train, numcep, maxfreq, wintime, hopti
   df <- merging_data_melfcc(audio, numcep, maxfreq, wintime, hoptime)
   rf_melfcc <- readRDS("rf_final_melfcc.rds")
   df$rf.pred.mel <- predict(rf_melfcc, new_data = df)$.pred_class
+  rm(rf_melfcc)
   # This is for K Nearest Neighbors
   knn_melfcc <- readRDS("knn_final_melfcc.rds")
   df$knn.pred.mel <- predict(knn_melfcc, new_data = df)$.pred_class
+  rm(knn_melfcc)
   gc()
   df <- df |> 
     dplyr::select("time_start","time_end","knn.pred.mel","rf.pred.mel")
