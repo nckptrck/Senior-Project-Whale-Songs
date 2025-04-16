@@ -1,8 +1,9 @@
 # ------------------------------- Setup ----------------------------------------
 {
 source("Packages.R")
-#source("AWS.R")
-#source("Data Capstone Reading Wav Files.R")
+# source("Creating Predictions.R")
+source("AWS.R")
+# source("Data Capstone Reading Wav Files.R")
 set.seed(1738)
 library(here)
 # library(keras)
@@ -132,22 +133,21 @@ df <- df1
 
 # ----------------------------- Creating CSVs -----------------------------------
 start <- wavs[[31]]
-wavs_subset <- wavs[c(31,27,29)]
+wavs_subset <- wavs[c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)]
 for (i in wavs_subset) {
   name <- paste0(i, ".wav")
-  merging_data_melfcc_csv(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
-  rm(wav_file)
-  gc()
+  merging_data_stft_csv(name, annotated = TRUE)
+
 }
 
 test <- c(31,27,29)
-validation <- c(17, 22,32,28,23)
+validation <- c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)
 all_indices <- 1:38
 remaining <- setdiff(all_indices, c(test, validation))
 
 
 test_melfcc <- data.frame()
-for(i in test){
+for(i in validation){
   wav_name <- wavs[[i]]
   name <- paste0(wav_name, "_melfcc.csv")
   file <- read.csv(name)
@@ -155,18 +155,20 @@ for(i in test){
     mutate(file_name = wav_name)
   test_melfcc <- rbind(test_melfcc,file )
 }
-write.csv(test_melfcc, "test_melfcc.csv")
+write.csv(test_melfcc, "validation_melfcc_10.csv")
 
 validation_stft <- data.frame()
-for(i in remaining){
+for(i in validation){
   wav_name <- wavs[[i]]
   name <- paste0(wav_name, "_stft.csv")
   file <- read.csv(name)
+  file <- file |> 
+    mutate(file_name = wav_name)
   validation_stft <- rbind(validation_stft,file)
   rm(file)
   gc()
 }
-write.csv(validation_stft, "training_stft.csv")
+write.csv(validation_stft, "validation_10_stft.csv")
 
 
 
@@ -589,7 +591,6 @@ to_selection_table <- function(name # ex. 6805.230205030826
 
 # ---------------------- Pipeline Writing SS for the test ----------------------
 
-
 #
 # ------------------------------ Results ---------------------------------------
 
@@ -702,6 +703,390 @@ write.csv(manual_errors, "230206100827_melfcc_false_postives.csv")
   res |> 
     count( n.knn > 0 | n.rf > 0)
 }
+
+
+
+# ------------------------------ Checking prediction window melfcc --------------------
+# {
+#   for (i in wavs_subset) {
+#     name <- paste0(i, ".wav")
+#     merging_data_melfcc_csv(name,numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
+#     gc()
+#   }
+#   test_melfcc <- data.frame()
+#   for(i in validation){
+#     wav_name <- wavs[[i]]
+#     name <- paste0(wav_name, "_melfcc.csv")
+#     file <- read.csv(name)
+#     file <- file |> 
+#       mutate(file_name = wav_name)
+#     test_melfcc <- dplyr::bind_rows(test_melfcc,file )
+#   }
+#   write.csv(test_melfcc, "validation_melfcc_10.csv")
+#   df <- test_melfcc |> 
+#     mutate(filenumber = cumsum(time_start == 0.0),
+#            song = as.factor(song)) |>
+#     dplyr::select(-X)
+#   rf_melfcc <- readRDS("rf_final_melfcc.rds")
+#   df$rf.pred.mel <- predict(rf_melfcc, new_data = df)$.pred_class
+#   rm(rf_melfcc)
+#   # This is for K Nearest Neighbors
+#   knn_melfcc <- readRDS("knn_final_melfcc.rds")
+#   df$knn.pred.mel <- predict(knn_melfcc, new_data = df)$.pred_class
+#   rm(knn_melfcc)
+#   df <- df |> 
+#     dplyr::select("filenumber","time_start","time_end","knn.pred.mel","rf.pred.mel")
+#   print("MELFCC is complete")
+#   
+#   write.csv(df, "full_10_val_melfcc.csv")
+#   results <- validation_metrics(df, wavs, validation, wide_grid, p_grid)
+# }
+
+grab_txt_files2 <- function(name, Bucket = "s3://whale-recordings/", Place = "Avila", number = "2"){
+  Object <- paste0("CPhydrophone/", Place, "/Deployment ", number, "/selection-tables/", name, ".txt")
+  
+  if (object_exists(object = Object, bucket = Bucket,
+                    key = Sys.getenv("AWS_ACCESS_KEY_ID"), secret = Sys.getenv("AWS_SECRET_ACCESS_KEY"),
+                    region = Sys.getenv("AWS_DEFAULT_REGION")) == TRUE ){
+    
+    table <- get_object(object = Object, bucket = Bucket,
+                        key = Sys.getenv("AWS_ACCESS_KEY_ID"), secret = Sys.getenv("AWS_SECRET_ACCESS_KEY"),
+                        region = Sys.getenv("AWS_DEFAULT_REGION"))
+    
+    file <- rawToChar(table)
+    txt <- read_tsv(file)
+    
+    return(txt)
+  }
+  return ("The name is not correct")
+}
+
+validation_metrics_mel <- function(data,
+                                   wavs,
+                                   validation_idx,
+                                   wide_grid, p_grid
+){
+  # create dataframe for results
+  results <- data.frame(filenumber = numeric(),
+                        prediction = character(),
+                        Total.Calls = numeric(),
+                        Precision = numeric(),
+                        Recall = numeric(),
+                        Detected.Calls = numeric(),
+                        False.Positives = numeric(),
+                        Missed.Calls = numeric(),
+                        len.avg = numeric())
+  # loop through validation files
+  for(f_name in wavs[validation_idx]){
+    # read in selection table (stored in validation folder in R project)
+    txt_name <- paste0(f_name, "-SS")
+    truth <- grab_txt_files2(txt_name)
+    # remove duplicate time annotations
+    truth <- truth |> 
+      dplyr::filter(View == "Spectrogram 1")
+    
+    # filter data frame to specific file
+    predictions <- data |>
+      filter(filename == f_name) |> 
+      dplyr::select(filenumber, time_start, time_end, knn.pred.mel, rf.pred.mel)
+    for(t in wide_grid){
+      # make predictions
+      wide_preds <- get_model_predictions_mel(predictions,t = t)
+      
+      # get metrics
+      wide_metrics <- data.frame(get_metrics(wide_preds, truth))
+      
+      # format for output
+      wide_metrics <- wide_metrics |> mutate(filename = f_name,
+                                             prediction = "wide",
+                                             len.avg = t)
+      # add to data frame
+      results <- rbind(results,wide_metrics)
+    }
+    for(t in p_grid){
+      # make predictions
+      precise_preds <- get_model_predictions_mel(predictions,t = t)
+      
+      # get metrics
+      precise_metrics <- data.frame(get_metrics(precise_preds, truth))
+      # format for output
+      precise_metrics <- precise_metrics |> mutate(filename = f_name,
+                                                   prediction = "precise",
+                                                   len.avg = t)
+      # add to data frame
+      results <- rbind(results,precise_metrics)
+    }
+    
+  }
+  # format results
+  results |> 
+    dplyr::select(filename, prediction, len.avg,
+                  Total.Calls, Detected.Calls, False.Positives, Missed.Calls,
+                  Precision, Recall)
+}
+
+# if straight from the predictions use as.numeric(levels(knn.pred.mel))[knn.pred.mel] + 
+# as.numeric(levels(rf.pred.mel))[rf.pred.mel]
+
+# if from csv use as.numeric(knn.pred.mel) + 
+# as.numeric(rf.pred.mel)
+
+get_model_predictions_mel <- function(preds,t = 30, write = F){
+  # extract filename for output
+  name <- preds$filename[1]
+  output <- preds |> 
+    # add other models into total.pred
+    mutate(total.pred = as.numeric(knn.pred.mel) + 
+             as.numeric(rf.pred.mel),
+           rolling.avg = frollmean(total.pred, n = t, fill = 0),
+           final_pred = ifelse(rolling.avg>0, 1, 0),
+           pred_number= rleid(final_pred),
+           `Begin Time (s)` = time_start, - (t/10),
+           `End Time (s)` = time_end - (t/10) ) |> 
+    filter(final_pred == 1) |> 
+    group_by(pred_number) |> 
+    summarise( `Begin Time (s)`= min(`Begin Time (s)`),
+               `End Time (s)` = max(`End Time (s)`)) |>
+    mutate(Selection = row_number(),
+           View = "Spectrogram 1",
+           Channel = 1) |> 
+    dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
+  
+  path <- paste0("model.pred.", name, ".txt", sep = "")
+  if(write){
+    write_tsv(output, path)
+  }
+  output
+}
+
+get_metrics <- function(preds,truth){
+  # loop through model predictions
+  # define true and false positives
+  tp <- 0
+  fp <- 0
+  total <- nrow(truth)
+  for(i in 1:nrow(preds)) {
+    row <- preds[i,]
+    p.begin <- row$`Begin Time (s)`
+    p.end <- row$`End Time (s)`
+    # loop through selection table
+    flag <- FALSE
+    for(j in 1:nrow(truth)){
+      trow <- truth[j,]
+      t.begin <- trow$`Begin Time (s)`
+      t.end <- trow$`End Time (s)`
+      if(max(t.begin,p.begin) - min(t.end,p.end) <= 1){ # check if they overlap (within 1s)
+        tp <- tp + 1
+        flag <- T
+      }
+    }
+    if(!flag){ # check if there was no overlap (false positive)
+      fp <- fp + 1
+    }
+  }
+  # number of missed annotations
+  fn <- total - tp
+  if(fn < 0){
+    fn <- 0
+  }
+  
+  # precision and recall
+  p <- tp / (tp + fp)
+  r <- tp/total
+  return(list('Total Calls' = total,
+              'Precision' = p,
+              'Recall' = r,
+              'Detected Calls' = tp,
+              'False Positives' = fp,
+              'Missed Calls' = fn))
+}
+
+{
+  melfcc_results <- read.csv("full_10_val_melfcc.csv")
+  wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
+  wavs <- as.list(wavs_names$Filename)
+  validation <- c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)
+  wide_grid <- seq(100,600, by = 50)
+  p_grid <- seq(5,50, by = 5)
+}
+
+selected_filenames <- wavs[validation] 
+selected_filenames <- unlist(selected_filenames)
+melfcc_results <- melfcc_results |> 
+  mutate(filename = selected_filenames[filenumber])
+
+results <- validation_metrics_mel(melfcc_results, wavs, validation, wide_grid, p_grid)
+
+results <- results |> 
+  arrange(filename, len.avg)
+
+write.csv(results, "validation_results_melfcc_10_song_calls.csv")
+
+# ----------------- Making Predictions and metrics for STFT --------------------
+
+{
+  valid_stft <- read.csv("validation_10_stft.csv")
+  df <- valid_stft |> 
+        mutate(filenumber = cumsum(time_start == 0.0),
+               song = as.factor(song)) |>
+        dplyr::select(-X)
+  rf_stft <- readRDS("rf_final_stft.rds")
+  df$rf.pred.stft <- predict(rf_stft, new_data = df)$.pred_class
+    rm(rf_stft)
+    # This is for K Nearest Neighbors
+    knn_stft <- readRDS("knn_final_stft.rds")
+    df$knn.pred.stft <- predict(knn_stft, new_data = df)$.pred_class
+    rm(knn_stft)
+    df <- df |>
+      dplyr::select("file_name","time_start","time_end","knn.pred.stft","rf.pred.stft")
+
+    write.csv(df, "val_10_stft_pred.csv")
+}
+valid_stft <- read.csv("val_10_stft_pred.csv")
+valid_stft <- valid_stft |> 
+  mutate(filenumber = cumsum(time_start == 0.0))
+write.csv(valid_stft, "val_10_stft_pred.csv")
+
+wavs_subset_stft <- wavs[c(17, 22, 32, 28, 23)]
+get_model_predictions_stft <- function(preds,t = 30, write = F){
+  # extract filename for output
+  name <- preds$filename
+  output <- preds |> 
+    # add other models into total.pred
+    mutate(total.pred = as.numeric(knn.pred.stft) + 
+             as.numeric(rf.pred.stft),
+           rolling.avg = frollmean(total.pred, n = t, fill = 0),
+           final_pred = ifelse(rolling.avg>0, 1, 0),
+           pred_number= rleid(final_pred),
+           `Begin Time (s)` = time_start, - (t/10),
+           `End Time (s)` = time_end - (t/10) ) |> 
+    filter(final_pred == 1) |> 
+    group_by(pred_number) |> 
+    summarise( `Begin Time (s)`= min(`Begin Time (s)`),
+               `End Time (s)` = max(`End Time (s)`)) |>
+    mutate(Selection = row_number(),
+           View = "Spectrogram 1",
+           Channel = 1) |> 
+    dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
+  
+  path <- paste0("model.pred.", name, ".txt", sep = "")
+  if(write){
+    write_tsv(output, path)
+  }
+  output
+}
+
+validation_metrics_stft <- function(data,
+                                    wavs,
+                                    validation_idx,
+                                    wide_grid, p_grid){
+  results <- data.frame(filenumber = numeric(),
+                        prediction = character(),
+                        Total.Calls = numeric(),
+                        Precision = numeric(),
+                        Recall = numeric(),
+                        Detected.Calls = numeric(),
+                        False.Positives = numeric(),
+                        Missed.Calls = numeric(),
+                        len.avg = numeric())
+  # loop through validation files
+  for(f_name in wavs[validation_idx]){
+    # read in selection table (stored in validation folder in R project)
+    txt_name <- paste0(f_name, "-SS")
+    truth <- grab_txt_files2(txt_name)
+    # remove duplicate time annotations
+    truth <- truth |> 
+      dplyr::filter(View == "Spectrogram 1")
+    
+    # filter data frame to specific file
+    predictions <- data |>
+      filter(filename == f_name) |> 
+      dplyr::select(filenumber, time_start, time_end, knn.pred.stft, rf.pred.stft)
+    for(t in wide_grid){
+      # make predictions
+      wide_preds <- get_model_predictions_stft(predictions,t = t)
+      
+      # get metrics
+      wide_metrics <- data.frame(get_metrics(wide_preds, truth))
+      
+      # format for output
+      wide_metrics <- wide_metrics |> mutate(filename = f_name,
+                                             prediction = "wide",
+                                             len.avg = t)
+      # add to data frame
+      results <- rbind(results,wide_metrics)
+    }
+    for(t in p_grid){
+      # make predictions
+      precise_preds <- get_model_predictions_stft(predictions,t = t)
+      
+      # get metrics
+      precise_metrics <- data.frame(get_metrics(precise_preds, truth))
+      # format for output
+      precise_metrics <- precise_metrics |> mutate(filename = f_name,
+                                                   prediction = "precise",
+                                                   len.avg = t)
+      # add to data frame
+      results <- rbind(results,precise_metrics)
+    }
+    
+  }
+  # format results
+  results |> 
+    dplyr::select(filename, prediction, len.avg,
+                  Total.Calls, Detected.Calls, False.Positives, Missed.Calls,
+                  Precision, Recall)
+}
+
+{
+  stft_results <- read.csv("val_stft_pred.csv")
+  wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
+  wavs <- as.list(wavs_names$Filename)
+  validation <- c(17, 22, 32, 28, 23)
+  wide_grid <- seq(100,600, by = 50)
+  p_grid <- seq(5,50, by = 5)
+
+selected_filenames <- wavs[validation] 
+selected_filenames <- unlist(selected_filenames)
+stft_results <- stft_results |> 
+  mutate(filename = selected_filenames[filenumber])
+}
+
+stft_validation_metrics <- validation_metrics_stft(stft_results, wavs, validation, wide_grid, p_grid)
+
+write.csv(as.data.frame(stft_validation_metrics), "validation_results_STFT_5_song_calls.csv", row.names = FALSE)
+
+
+# ------------------- Getting Metrics for Melfcc after grouping -------------------------
+results_melfcc <- read.csv("validation_results_melfcc_10_song_calls.csv")
+
+
+results_melfcc1 <- results_melfcc |> 
+  group_by(prediction, len.avg) |>
+  summarise(mean.precision = mean(Precision),
+            sd.precision = sd(Precision),
+            mean.recall = mean(Recall),
+            sd.recall = sd(Recall)) |> 
+  slice_max(mean.recall, n = 10)
+
+# ------------------- Getting Metrics for STFT after grouping -------------------------
+
+
+results_STFT <- read.csv("validation_results_STFT_5_song_calls.csv")
+
+
+results_STFT1 <- results_STFT |> 
+  group_by(prediction, len.avg) |>
+  summarise(mean.precision = mean(Precision),
+            sd.precision = sd(Precision),
+            mean.recall = mean(Recall),
+            sd.recall = sd(Recall)) |> 
+  slice_max(mean.recall, n = 10)
+
+
+
+
+
 
 # ---------------------- Testing on Another Annotated File ---------------------
 
