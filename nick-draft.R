@@ -953,7 +953,7 @@ xgb_grid_search |> collect_metrics() |> filter(.metric == 'roc_auc') |> slice_ma
 
 xgb_mod <- boost_tree(trees = 300,
                       tree_depth = 15, min_n = 21,
-                      loss_reduction = 0.0000562, mtry = 13,        
+                      loss_reduction = a, mtry = 13,        
                       learn_rate = 0.1) |> 
   set_engine("xgboost") |> 
   set_mode("classification")
@@ -967,8 +967,7 @@ xgb.fit <- xgb_wf |> fit(train_fft)
 validation_fft$pred_xgb <- predict(xgb.fit, new_data = validation_fft)$.pred_class
 
 
-
- # calculate metrics
+# calculate metrics
 # Compute accuracy, precision, recall, and F1-score
 validation_fft$song <- factor(validation_fft$song, levels = c(1,0))
 accuracy(validation_fft, truth = song, estimate = pred_xgb)
@@ -979,6 +978,46 @@ f_meas(validation_fft, truth = song, estimate = pred_xgb)
 # confusion matrix
 conf_mat(validation_fft, truth = song, estimate = pred_xgb)
 
+## MODEL 3: KNN ----------------------------------------------------------------
+
+knn_tune <- nearest_neighbor(neighbors = tune()) |> 
+  set_engine("kknn") |> 
+  set_mode("classification")
+
+neighbor_grid <- grid_regular(neighbors(c(1,250)),
+                              levels = 8)
+
+knn_tune_wf <- workflow() |> 
+  add_recipe(recipe_xgb) |> 
+  add_model(knn_tune)
+
+knn_grid_search <- tune_grid(knn_tune_wf,
+                             resamples = full_cvs,
+                             grid = neighbor_grid,
+                             metrics = metric_set(roc_auc, precision, recall, f_meas))
+
+knn_grid_search |> 
+  collect_metrics() |> filter(.metric == 'precision') |> slice_max(mean, n = 5)
+
+knn_grid_search |> 
+  collect_metrics() |> filter(.metric == 'recall') |> slice_max(mean, n = 5)
+
+knn_grid_search |> 
+  collect_metrics() |> filter(.metric == 'roc_auc') |> slice_max(mean, n = 5)
+
+knn_grid_search |> 
+  collect_metrics() |> filter(.metric == 'f_meas') |> slice_max(mean, n = 5)
+
+## Fit best 
+knn_final <- nearest_neighbor(neighbors = 107) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wf <- workflow() |> 
+  add_recipe(recipe_xgb) |> 
+  add_model(knn_final)
+
+knn.fit.fft <- knn_wf |> fit(train_fft)
 
 # Evaluate on file 6805.230206100827.wav
 
@@ -1071,7 +1110,7 @@ get_model_predictions <- function(preds,t = 30, write = F){
            Channel = 1) |> 
     dplyr::select(Selection,View, Channel, `Begin Time (s)`, `End Time (s)`)
   
-  path <- paste0("model.pred.", name, ".txt", sep = "")
+  path <- paste0("wider.model.pred", name, ".txt", sep = "")
   if(write){
   write_tsv(output, path)
   }
@@ -1161,7 +1200,7 @@ get_metrics(precise_model_preds,sel_table)
 get_metrics(wide_model_preds,sel_table)
 
 # Get Metrics for all 5 validation files ---------------------------------------
-library(here)
+#library(here)
 
 # input: data - dataframe containing validation predictions (input to get_model_predictions)
 #        wavs - list of all annotated filnames
@@ -1206,7 +1245,7 @@ validation_metrics <- function(data,
         
         # get metrics
         wide_metrics <- data.frame(get_metrics(wide_preds, truth))
-        precise_metrics <- data.frame(get_metrics(precise_preds, truth))
+        #precise_metrics <- data.frame(get_metrics(precise_preds, truth))
         
         # format for output
         wide_metrics <- wide_metrics |> mutate(filename = f_name,
@@ -1248,20 +1287,22 @@ p_grid <- seq(5,50, by = 5)
 # save/load models
 # save(xgb.fit, file = "fft_xgb.Rdata")
 # save(rf.fit, file = "fft_rf.Rdata")
+library(here)
 xgb.fit <- load(here('fft_xgb.Rdata'))
 rf.fit <- load(here('fft_rf.Rdata'))
-
+validation_fft <- read_csv(here('validation_fft.csv'))
 # make predictions
 validation_fft$`...1` <- NA
 validation_fft$pred_xgb <- predict(xgb.fit, new_data = validation_fft)$.pred_class
 validation_fft$pred_rf <- predict(rf.fit, new_data = validation_fft)$.pred_class
-
+validation_fft$pred_knn <- predict(knn.fit.fft,new_data = validation_fft)$.pred_class
 # get validation results
 results <- validation_metrics(validation_fft, wavs, validation, wide_grid, p_grid)
 
 
 # explore results
-results
+results |> 
+  count(Total.Calls)
 
 results |> 
   group_by(prediction, len.avg) |> 
@@ -1269,7 +1310,97 @@ results |>
             sd.precision = sd(Precision),
             mean.recall = mean(Recall),
             sd.recall = sd(Recall)) |> 
-    slice_max(mean.recall, n = 10)
+    slice_max(mean.precision, n = 10)
 
 results |> 
   filter(len.avg == 10)
+
+
+# test on unseen file
+
+fft_to_csv('6805.230205170826.wav', end_freq = 600, step_size = 25,
+                          time_period = .1, # you can change this
+                          start_time = NULL, end_time = NULL, # to shrink around one part if necessary
+                          annotated = F)
+
+test_csv <- read_csv(here('6805.230205170826_fft.csv'))
+
+# fix column names
+test_csv <- test_csv |> 
+  mutate(X = NA,
+         annotation_num = NA,
+         time_interval = NA,
+         filename = "6805.230205170826")
+
+new_names <- names(test_csv)
+new_names <- ifelse(grepl("^[0-9]", new_names), paste0("X", new_names), new_names)
+
+# Assign the new names back to the dataframe
+names(test_csv) <- new_names
+names(test_csv) <- gsub("\\-", ".", names(test_csv))
+
+# make predictions 
+test_csv$pred_xgb <- predict(xgb.fit, new_data = test_csv)$.pred_class
+test_csv$pred_rf <- predict(rf.fit, new_data = test_csv)$.pred_class 
+
+# output selection table
+get_model_predictions(test_csv, t = 30, write = T)
+get_model_predictions(test_csv, t = 300, write = T)
+
+
+# table creation for final report
+model.metrics <- data.frame(Predictions = c("Wide", "Precise", "Wide", "Precise", "Wide", "Precise"),
+                            Transformation = c("FFT", "FFT", "STFT", "STFT", "MFCC", "MFCC"),
+                            r = c(35,5,45,5,55,5),
+                            Precision = c(0.83,0.77,0.87,0.88,0.88,0.91),
+                            Recall = c(0.81,0.83,0.95,0.91,0.90,0.80))
+library(kableExtra)
+model.metrics |> 
+  dplyr::select(Transformation, Predictions, r, Precision, Recall) |> 
+  kbl(col.names = c('Transformation', 'Predictions', 'Rolling Avg (s)', 'Precision', 'Recall'),
+      caption = "Model Metrics: Validation Set") |> 
+  collapse_rows(columns = 1, valign = "top") |> 
+  kable_classic(full_width = T, html_font = "Cambria",
+                  lightable_options = "striped") 
+
+
+# Save final models for later use
+saveRDS(knn.fit.fft, "knn_final_fft.rds")
+saveRDS(rf.fit, "rf_final_fft.rds")
+
+validation_stft <- read_csv(here('val_10_stft_pred.csv'))
+validation_melfcc <- read_csv(here('full_10_val_melfcc.csv'))
+
+# create master dataframe
+selected_filenames <- wavs[validation] 
+selected_filenames <- unlist(selected_filenames)
+
+validation_stft <- validation_stft |> 
+  mutate(filename = selected_filenames[filenumber]) |> 
+  dplyr::select(time_start,time_end,knn.pred.stft,rf.pred.stft,filename)
+
+validation_melfcc <- validation_melfcc |> 
+  mutate(filename = selected_filenames[filenumber]) |> 
+  dplyr::select(time_start,time_end,knn.pred.mel,rf.pred.mel,filename)
+
+validation_fft2 <- validation_fft |> 
+  dplyr::select(time_start,time_end,pred_rf,pred_knn,filename) |> 
+  rename(rf.pred.fft = pred_rf,
+         knn.pred.fft = pred_knn)
+
+
+full_validation <- validation_melfcc |> 
+  left_join(validation_stft, by = join_by(filename,
+                                          time_start,
+                                          time_end))
+## Comparing Models
+
+pred_list <- c(c(""))
+
+
+compare_models <- function(data,
+                           wavs,
+                           validation_idx,
+                           )
+
+
