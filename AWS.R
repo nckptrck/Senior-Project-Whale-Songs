@@ -88,6 +88,31 @@ grab_wav_files <- function(name, Bucket = "s3://whale-recordings/", Place = "Avi
 # how to use 
 #   grab_wav_files("6805.230201090825.wav") just downloads the files
 
+# ------------- grabs all of the file names in deployment 2
+
+bucket_contents <- get_bucket(
+  bucket = "whale-recordings",
+  prefix = "CPhydrophone/Avila/Deployment 2/wav-files/fullsize_files/",
+  max = Inf
+)
+
+# If you want a data frame
+df <- lapply(bucket_contents, function(x) {
+  data.frame(
+    key = x$Key,
+    size = x$Size,
+    last_modified = x$LastModified,
+    stringsAsFactors = FALSE
+  )
+})
+df <- do.call(rbind, df)
+
+df <- df |> 
+  mutate(name = map_chr(strsplit(key, "/"), ~ .x[6])) |> 
+  select(name)
+
+write.csv(df, "Grey Whale File Names.csv")
+df2 <- read.csv("Grey Whale File Names.csv")
 
 # Ignore -----------------------------------------------------------------------
 
