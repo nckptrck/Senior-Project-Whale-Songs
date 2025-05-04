@@ -1,37 +1,37 @@
 # ------------------------------- Setup ----------------------------------------
+
+# This allows us to use the functions that are found in these files.
+# These fils must be in the same folder as Alex-Draft in order to use source
+
 {
 source("Packages.R")
 # source("Creating Predictions.R")
 source("AWS.R")
-# source("Data Capstone Reading Wav Files.R")
+source("Data Capstone Reading Wav Files.R")
 set.seed(1738)
 library(here)
-# library(keras)
-# library(tensorflow)
+}
 
-custom_metrics <- metric_set(accuracy, precision, recall, f_meas)
-}
-{
-# file <- "6805.230201090825.wav"
-# file <- "6805.230201180825.wav"
-# file <- "6805.230201150825.wav"
-# 
-# test <- "6805.230204003826.wav"
-}
-# -------------------------- Getting Wav Names ---------------------------------
-{
-  wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
-  wavs <- as.list(wavs_names$Filename)
-}
 
 # ----------------------------- FTT Read-in ------------------------------------
 # need to change this to the files that you want to pull
 
-df <- merging_data(file, 300, 20, annotated = TRUE)
+file <- "The file name hre"
+
+df <- merging_data(file, 300, 20, annotated = TRUE)   # this code is from the Data Capstone Reading Wav Files
 
 # model testing
 
 # -------------------------- STFT Read in Function -----------------------------
+
+# The stft takes the longest because the frequency bands are so small. 
+# This transform does not perform as well so no need run
+
+# n: Window length: this is the time unit larger means finer frequency detail. Ours is .1 sec to keep consistent
+# overlap: Overlap Window: This is the length of time for the overlap to be .0707 secs
+# freq: Max frequency: This limits the rows that are in the dataframe but must be calculated on the side. 
+    # audio@samp.rate / n = bin size. Then do max frequency (that you want) / bin size to get your n
+
 merging_data_stft_csv <- function(name, n = 16384, overlap = 6784, freq = 51,annotated = FALSE, window = NULL){
   # grabbing the wav file
   grab_wav_files(name)
@@ -39,11 +39,14 @@ merging_data_stft_csv <- function(name, n = 16384, overlap = 6784, freq = 51,ann
   # creating the data frame
   audio <- readWave(name)
   audio_data <- as.numeric(audio@left)
-  audio4 <- specgram(audio_data, n = n, Fs = audio@samp.rate, overlap = overlap)
+  audio4 <- specgram(audio_data, n = n, Fs = audio@samp.rate, overlap = overlap)  # this is the transformation
   
   # this is taking the magnitude in order to remove the imaginary numbers
-  a <- Mod(audio4$S[1:freq,])
+  a <- Mod(audio4$S[1:freq,]) # limiting how big the dataframe will be by capping the max frequency
+  
   a <- t(a)
+  
+  # This adds the time for each row
   wav_file <- as.data.frame(a) %>%
     mutate(
       time_start =(seq(0, by = 0.1, length.out = nrow(a))),
@@ -72,24 +75,36 @@ merging_data_stft_csv <- function(name, n = 16384, overlap = 6784, freq = 51,ann
   }
   
   wav_file$time_interval <- rleid(wav_file$annotation_num)
+  
   # deleting the file to save space
   if (file.exists(name)) {
     file.remove(name)
   }
-  file_name <- sub("\\.wav$", "_stft.csv", name)
-  write.csv(wav_file, file_name)
+  
+  # THis will write the file out to a csv 
+  # file_name <- sub("\\.wav$", "_stft.csv", name)
+  # write.csv(wav_file, file_name)
   return ("done")
 }
 
-df <- merging_data_stft(test, annotated = TRUE)
+df <- merging_data_stft(file, annotated = TRUE)
 
 # ------------------------------- melfcc ---------------------------------------
+
+# This transform performed the best
+
+# numcep: Number of cepstral coefficients. We used 13 but could go up to 20.
+# wintime: Window Time. Used .1 seconds to be consistent with the other transforms
+# hoptime: Hop Time. Used .05 to keep consistent with the short time fourier transform.
+
 merging_data_melfcc_csv <- function(name, numcep, maxfreq, wintime, hoptime, annotated = FALSE){
   grab_wav_files(name)
   audio <- readWave(name)
   
+  # This is a built in melfcc function that does the transform
   audio2 <- melfcc(audio, numcep = numcep, maxfreq = maxfreq, wintime = wintime, hoptime = hoptime)
   
+  # Adding the time to the dataframe
   wav_file <- as.data.frame(audio2) %>%
     mutate(
       time_start =(seq(0, by = hoptime, length.out = nrow(audio2))),
@@ -122,57 +137,17 @@ merging_data_melfcc_csv <- function(name, numcep, maxfreq, wintime, hoptime, ann
   if (file.exists(name)) {
     file.remove(name)
   }
-  file_name <- sub("\\.wav$", "_melfcc.csv", name)
-  write.csv(wav_file, file_name)
+  
+  # can make the dataframe in to a csv
+  # file_name <- sub("\\.wav$", "_melfcc.csv", name)
+  # write.csv(wav_file, file_name)
   return ("done")
 }
 
 df1 <- merging_data_melfcc(file, numcep = 13, wintime = .2, hoptime = .1, maxfreq = 800, annotated = TRUE)
 df <- df1
 
-
-# ----------------------------- Creating CSVs -----------------------------------
-start <- wavs[[31]]
-wavs_subset <- wavs[c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)]
-for (i in wavs_subset) {
-  name <- paste0(i, ".wav")
-  merging_data_stft_csv(name, annotated = TRUE)
-
-}
-
-test <- c(31,27,29)
-validation <- c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)
-all_indices <- 1:38
-remaining <- setdiff(all_indices, c(test, validation))
-
-
-test_melfcc <- data.frame()
-for(i in validation){
-  wav_name <- wavs[[i]]
-  name <- paste0(wav_name, "_melfcc.csv")
-  file <- read.csv(name)
-  file <- file |> 
-    mutate(file_name = wav_name)
-  test_melfcc <- rbind(test_melfcc,file )
-}
-write.csv(test_melfcc, "validation_melfcc_10.csv")
-
-validation_stft <- data.frame()
-for(i in validation){
-  wav_name <- wavs[[i]]
-  name <- paste0(wav_name, "_stft.csv")
-  file <- read.csv(name)
-  file <- file |> 
-    mutate(file_name = wav_name)
-  validation_stft <- rbind(validation_stft,file)
-  rm(file)
-  gc()
-}
-write.csv(validation_stft, "validation_10_stft.csv")
-
-
-
-# this 
+# Extra melfcc documentation I used to better understand the transformation
 
 ## ----------------------- Melfcc Documentation --------------------------------
 audio <- readWave(file)
@@ -201,51 +176,62 @@ mfccs <- melfcc(
 )
 
 
-# -------------------------- Temporal Context ----------------------------------
-
-create_temporal_data <- function(df, window_size) {
-  windowed_data <- list()
-  num_windows <- nrow(df) - window_size + 1
-  
-  # If num_windows is less than 1, pad the dataframe to ensure at least one window
-  if (num_windows < 1) {
-    padding <- df[rep(nrow(df), window_size - nrow(df)), ]
-    df <- rbind(df, padding)
-    num_windows <- 1
-  }
-  
-  for (i in 1:num_windows) {
-    window <- df[i:(i + window_size - 1), ]
-    
-    # Calculate the mean of each frequency range within the window
-    window_means <- colMeans(window[, grep("Hz", colnames(df))])
-    
-    # Add the time_start and time_end of the window
-    window_means <- c(time_start = window$time_start[1], 
-                      time_end = window$time_end[window_size], 
-                      window_means)
-    windowed_data[[i]] <- window_means
-  }
-  windowed_df <- do.call(rbind, windowed_data) %>% as_tibble()
-  # Ensure the rows align by matching time_start
-  merged_df <- df %>%
-    left_join(windowed_df, by = c("time_start" = "time_start"))
-  
-  return(merged_df)
+# -------------------------- Getting Wav Names ---------------------------------
+{
+  wavs_names <- read.table("Wav file names", header = TRUE, sep = " ", colClasses = c("character", "numeric"))
+  wavs <- as.list(wavs_names$Filename)
 }
 
-df2 <- create_temporal_data(df1, 5)
+# ----------------------------- Creating CSVs -----------------------------------
 
-df <- df2 |> 
-  filter(!(if_any(everything(), is.na) & song == 0))
+# This is the validation set that we choose. 
+# wavs is the original list made
+wavs_subset <- wavs[c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)]
 
-# right now to make sure not to use temporal_data it is not helping
-df <- df1
+# This works to convert all of the files into a csv after the transformation
+for (i in wavs_subset) {
+  name <- paste0(i, ".wav")
+  merging_data_stft_csv(name, annotated = TRUE)
+}
 
-df_cvs <- vfold_cv(df, v = 5)
+# This is just ot split up the names of files into different lists. 
+test <- c(31,27,29)
+validation <- c(17, 22, 32, 28, 23, 14, 13, 8, 36, 9)
+all_indices <- 1:38
+remaining <- setdiff(all_indices, c(test, validation))
+
+
+# examples of how we combined the validation and test to make one csv that holds multiple files
+
+test_melfcc <- data.frame()
+for(i in validation){
+  wav_name <- wavs[[i]]
+  name <- paste0(wav_name, "_melfcc.csv")
+  file <- read.csv(name)
+  file <- file |> 
+    mutate(file_name = wav_name)
+  test_melfcc <- rbind(test_melfcc,file )
+}
+write.csv(test_melfcc, "validation_melfcc_10.csv")
+
+validation_stft <- data.frame()
+for(i in validation){
+  wav_name <- wavs[[i]]
+  name <- paste0(wav_name, "_stft.csv")
+  file <- read.csv(name)
+  file <- file |> 
+    mutate(file_name = wav_name)
+  validation_stft <- rbind(validation_stft,file)
+  rm(file)
+  gc()
+}
+write.csv(validation_stft, "validation_10_stft.csv")
+
 
 
 # --------------------------- Train/Test Split ---------------------------------
+
+# When the files were initially combinded the intervals did not match up and added file number column
 
 fix_annotation_num <- function(file){
   file <- file |> 
@@ -270,7 +256,7 @@ df_melfcc_validation <- read.csv(here("validation_melfcc.csv"))
 df_melfcc_test <- read.csv(here("test_melfcc.csv"))
 
 
-# Slicing the train set
+# Slicing the train set taking 20 random training files
 {
   df_train <- df_stft_train |> 
     mutate(filenumber = cumsum(time_start == 0.0),
@@ -294,7 +280,7 @@ df_test <- df_test |>
 df_validation <- df_melfcc_validation|> 
   mutate(song = as.factor(song))
 
-# Recipes
+# ------------------------------- Recipes --------------------------------------
 
 {
 whale_recipe <- recipe(song ~ ., data = df_train) |> 
@@ -373,6 +359,7 @@ knn_final_wf <- workflow() |>
 knn_final_fit <- knn_final_wf |> fit(df_train)
 
 
+
 # ------------------------- Training & Testing ---------------------------------
 
 whale_rf_best <- rand_forest(mtry = 10,
@@ -398,7 +385,7 @@ print(validation_metrics)
 
 conf_mat(df_validation, truth = song, estimate = rf.pred)
 
-  
+# This makes a dataframe. Each row is an interval and returns number of predictions, true postives, and total  
 melf_val_res <- df_validation |> 
   mutate(rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1),
          knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
@@ -421,7 +408,6 @@ print(test_metrics)
 
 # Knn
 
-
 df_validation$knn.pred <- predict(knn_final_fit, new_data = df_validation)$.pred_class
 validation_metrics <- df_validation %>%
   metrics(truth = song, estimate = knn.pred)
@@ -434,7 +420,37 @@ test_metrics <- df_test %>%
 print(test_metrics)
 
 
+# -------------------------- Time Interval Testing -----------------------------
+
+# proportion of each whale song being predicted as 1
+df_test |> 
+  mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
+         rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1))  |> 
+  group_by(annotation_num) |> 
+  summarise(n.obs = n(),
+            n.knn = sum(knn.pred),
+            prop.knn = sum(knn.pred)/n(),
+            n.rf.roc = sum(rf.pred),
+            prop.rf.roc = sum(rf.pred)/n()
+  )
+
+# table with time intervals
+res <- df_test |> 
+  mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
+         rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1)) |> 
+  group_by(time_interval) |> 
+  summarise(n.obs = n(),
+            n.knn = sum(knn.pred),
+            prop.knn = sum(knn.pred)/n(),
+            n.rf.roc = sum(rf.pred),
+            prop.rf.roc = sum(rf.pred)/n())
+
+res
+
 # -------------------------- Merging Results -----------------------------------
+
+# This combines both stft and melfcc in order to compare results
+
 {
   melfcc_valid <- read.csv("melfcc_val_res_full.csv")
   stft_valid <- read.csv("stft_val_res_full.csv")
@@ -447,11 +463,12 @@ print(test_metrics)
   df_valid <- merge(stft_valid, melfcc_valid, by = c("time_start","time_end","filenumber", "song","annotation_num"), all.x = TRUE)
   
   df_valid <- arrange(df_valid, filenumber)
-  
   df_valid[is.na(df_valid)] <- 0
 }
 
 df_valid <- read.csv("val_res_full.csv")
+
+
 
 valid_results <-  df_valid |> 
   group_by(filenumber, annotation_num) |> 
@@ -482,7 +499,11 @@ df_valid %>%
     total_n.rf.mel = sum(sum(rf.pred.mel))
   )
 
-# ------------------------ Stores Results separate csv -------------------------
+
+# ------------------------ Stores Results in Separate csv ----------------------
+
+# This helps to individually look at each wav file
+
 {
   knn_final <- nearest_neighbor(neighbors = 30) |> 
     set_engine('kknn') |> 
@@ -519,7 +540,6 @@ validation <- c(17, 22,32,28,23)
 #results <- read.csv("")
 
 
-
 split_results <- split(df_valid, df_valid$filenumber)
 
 for (file_num in names(split_results)) {
@@ -530,29 +550,24 @@ for (file_num in names(split_results)) {
 }
 
 
-
 # ---------------------- 230206100827 to selection table -----------------------
+
+# Example of how to use the results to create a selection table
 
 to_selection_table <- function(name # ex. 6805.230205030826
                                ){
   pred <- read.csv(paste0(name,"_s_m_res.csv"))
   
-  # predictions.v1 <- pred |> 
-  #   mutate(total.pred = as.numeric(levels(knn.pred.mel))[knn.pred.mel] + 
-  #          as.numeric(levels(knn.pred.stft))[knn.pred.stft] +
-  #           as.numeric(levels(rf.pred.stft))[rf.pred.stft] +
-  #           as.numeric(levels(rf.pred.mel))[rf.pred.mel] ,
-  #        rolling.avg = frollmean(total.pred, n = 30, fill = 0),
-  #        final_pred = ifelse(rolling.avg>0, 1, 0),
-  #        pred_number= rleid(final_pred),
-  #        `Begin Time (s)` = time_start, - 2,
-  #        `End Time (s)` = time_end - 2) #adjust timeframe proportional to n (3 is too far)
+  pred$total.pred <- 0
+  possible_preds <- c("knn.pred.mel", "knn.pred.stft", "rf.pred.stft", "rf.pred.mel") # Looks for each of the predictions
+  for(pred in possible_preds) {
+    if(pred %in% colnames(df)) {
+      df$total.pred <- df$total.pred + as.numeric(levels(df[[pred]]))[df[[pred]]]
+    }
+  }
+  
   predictions.v1 <- pred |> 
-    mutate(total.pred = as.numeric(as.character(knn.pred.mel)) + 
-             as.numeric(as.character(knn.pred.stft)) +
-             as.numeric(as.character(rf.pred.stft)) +
-             as.numeric(as.character(rf.pred.mel)),
-           rolling.avg = frollmean(total.pred, n = 30, fill = 0),
+    mutate(rolling.avg = frollmean(total.pred, n = 30, fill = 0),
            final_pred = ifelse(rolling.avg>0, 1, 0),
            pred_number = rleid(final_pred),
            `Begin Time (s)` = time_start - 2,
@@ -589,49 +604,6 @@ to_selection_table <- function(name # ex. 6805.230205030826
 
 
 
-# ---------------------- Pipeline Writing SS for the test ----------------------
-
-#
-# ------------------------------ Results ---------------------------------------
-
-importance_scores <- final_model$fit$fit$fit$variable.importance
-importance_scores <- sort(importance_scores, decreasing = TRUE)
-print(importance_scores)
-
-# Compute accuracy, precision, recall, and F1-score
-precision(df_test, truth = song, estimate = knn.pred)
-precision(df_test, truth = song, estimate = rf.pred)
-
-# confusion matrix
-conf_mat(df_test, truth = song, estimate = knn.pred)
-conf_mat(df_test, truth = song, estimate = rf.pred)
-
-# -------------------------- Time Interval Testing -----------------------------
-
-# proportion of each whale song being predicted as 1
-df_test |> 
-  mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
-         rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1))  |> 
-  group_by(annotation_num) |> 
-  summarise(n.obs = n(),
-            n.knn = sum(knn.pred),
-            prop.knn = sum(knn.pred)/n(),
-            n.rf.roc = sum(rf.pred),
-            prop.rf.roc = sum(rf.pred)/n()
-  )
-
-# table with time intervals
-res <- df_test |> 
-  mutate(knn.pred = ifelse(as.numeric(knn.pred) == 2,0,1),
-         rf.pred = ifelse(as.numeric(rf.pred) == 2,0,1)) |> 
-  group_by(time_interval) |> 
-  summarise(n.obs = n(),
-            n.knn = sum(knn.pred),
-            prop.knn = sum(knn.pred)/n(),
-            n.rf.roc = sum(rf.pred),
-            prop.rf.roc = sum(rf.pred)/n())
-
-res
 
 # ------------------------- Writing the Results --------------------------------
 # this is specifically for the stft sthere is something off about the leveling
@@ -665,6 +637,9 @@ res <- res |>
 write.csv(res, "230204003826 using STFT knn = 30.csv")
 
 # ----------------------- Comparing results in Raven ---------------------------
+
+# This was manual error analysis and does not need to be run
+
 file <- read.csv("230204030826_melfcc_res.csv") 
 file <- read.csv("230205000826_melfcc_res.csv") 
 file <- read.csv("230206100827_melfcc_res.csv") 
@@ -706,7 +681,8 @@ write.csv(manual_errors, "230206100827_melfcc_false_postives.csv")
 
 
 
-# ------------------------------ Checking prediction window melfcc --------------------
+
+# -------------------------- Checking prediction window melfcc --------------------
 # {
 #   for (i in wavs_subset) {
 #     name <- paste0(i, ".wav")
@@ -856,7 +832,7 @@ get_model_predictions_mel <- function(preds,t = 30, write = F){
   if(write){
     write_tsv(output, path)
   }
-  output
+  return(output)
 }
 
 get_metrics <- function(preds,truth){
@@ -1084,8 +1060,47 @@ results_STFT1 <- results_STFT |>
   slice_max(mean.recall, n = 10)
 
 
+# ------------------------- Humpback Whale Testing -----------------------------
+
+# use this one 671658014.180928183606 
+
+melfcc_humpack <- read.csv(here('melfcc_180928183606.csv'))
+table_melfcc_humpback <- read.table(here('table_melfcc_180928183606.txt'), header = TRUE )
+
+melfcc_humpack$song <- as.factor(melfcc_humpack$song)
+melfcc_humpack$rf.pred <- as.factor(melfcc_humpack$rf.pred)
+precision(melfcc_humpack, truth = song, estimate = rf.pred)
+
+table_melfcc_humpback |> 
+  filter(time_interval %% 2 == 1 & n.rf.roc != 0) |> 
+  count()
+
+# 
+# ------------------------ Breaking up the wav file 
+
+# to is a c(,) and from is a c(,)
 
 
+# this only works if splitting into two files
+split_file <- function(name, start, end){
+  for(i in 1:1) {
+    training <- readWave(name, from = start[i], to = end[i], units = "minutes") # it breaks right here
+    i <- i + 1
+    testing <- readWave(name, from = start[i], to = end[i], units = "minutes")
+  }
+  return(c(training, testing)) # cannot return both 
+  
+}
+
+# the for loop works 
+# Error in readBin(con, int, n = N, size = bytes, signed = (bytes != 1), : invalid 'n' argument
+
+both <- split_file(name, c(0,60), c(60,90))
+training <- both[[1]]
+testing <- both[[2]]
+
+
+# there is a lot of fluxuations so then max freq should be a least 1000 or 1200
 
 
 # ---------------------- Testing on Another Annotated File ---------------------
@@ -1125,7 +1140,10 @@ test_results3 %>%
 
 
 
-# -------------------- Depreciated STFT Reading Function -----------------------
+
+
+# --------------------- Tested Transforms that did not work --------------------
+# -------------------- Depreciated STFT Reading Function
 merging_data_stft_do_not_use <- function(name, end_freq, step_size,
                                          time_period = .1, # you can change this
                                          start_time = NULL, end_time = NULL, # to shrink around one part if necessary
@@ -1172,3 +1190,45 @@ merging_data_stft_do_not_use <- function(name, end_freq, step_size,
   return (wav_file)
 }
 
+# -------------------------- Temporal Context
+
+create_temporal_data <- function(df, window_size) {
+  windowed_data <- list()
+  num_windows <- nrow(df) - window_size + 1
+  
+  # If num_windows is less than 1, pad the dataframe to ensure at least one window
+  if (num_windows < 1) {
+    padding <- df[rep(nrow(df), window_size - nrow(df)), ]
+    df <- rbind(df, padding)
+    num_windows <- 1
+  }
+  
+  for (i in 1:num_windows) {
+    window <- df[i:(i + window_size - 1), ]
+    
+    # Calculate the mean of each frequency range within the window
+    window_means <- colMeans(window[, grep("Hz", colnames(df))])
+    
+    # Add the time_start and time_end of the window
+    window_means <- c(time_start = window$time_start[1], 
+                      time_end = window$time_end[window_size], 
+                      window_means)
+    windowed_data[[i]] <- window_means
+  }
+  windowed_df <- do.call(rbind, windowed_data) %>% as_tibble()
+  # Ensure the rows align by matching time_start
+  merged_df <- df %>%
+    left_join(windowed_df, by = c("time_start" = "time_start"))
+  
+  return(merged_df)
+}
+
+df2 <- create_temporal_data(df1, 5)
+
+df <- df2 |> 
+  filter(!(if_any(everything(), is.na) & song == 0))
+
+# right now to make sure not to use temporal_data it is not helping
+df <- df1
+
+df_cvs <- vfold_cv(df, v = 5)
